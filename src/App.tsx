@@ -1018,7 +1018,7 @@ const TEXT_PROVIDERS = [
   { id: 'custom', name: 'Свой агрегатор', models: [] },
 ]
 
-function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvider, model, setModel, keyVal, setKeyVal, customUrl, setCustomUrl }: any) {
+function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvider, model, setModel, keyVal, setKeyVal, customUrl, setCustomUrl, kind, customModels, loadingModels, modelError, onLoadModels }: any) {
   const [showKey, setShowKey] = useState(false)
   const cur = providers.find((p: any) => p.id === provider) || providers[0]
   const isCustom = provider === 'custom'
@@ -1037,10 +1037,27 @@ function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvide
 
       {isCustom ? (
         <>
-          <label className="field-label">Base URL агрегатора</label>
+          <label className="field-label">Base URL агрегатора (OpenRouter-совместимый)</label>
           <input className="text-input" value={customUrl} onChange={e => setCustomUrl(e.target.value)} placeholder="https://api.aggregator.com/v1" />
-          <label className="field-label">Название модели</label>
-          <input className="text-input" value={model} onChange={e => setModel(e.target.value)} placeholder="например: gpt-4o, claude-3-5-sonnet…" />
+          <div className="model-load-row">
+            <button className="btn sm" onClick={onLoadModels} disabled={loadingModels}>
+              {loadingModels ? <><Loader2 size={14} className="spin" /> Загружаю…</> : <><RefreshCw size={14} /> Загрузить список моделей</>}
+            </button>
+            {modelError && <span className="lock-err" style={{ fontSize: 12 }}>{modelError}</span>}
+          </div>
+          {customModels.length > 0 && (
+            <>
+              <label className="field-label">{kind === 'vision' ? 'Vision-модели (для фото)' : 'Текстовые модели (чат и планы)'}</label>
+              <div className="model-chips">
+                {customModels.filter(m => (kind === 'vision') === m.vision).slice(0, 12).map(m => (
+                  <button key={m.id} className={`chip click ${model === m.id ? 'sel' : ''}`} onClick={() => setModel(m.id)}>{m.id}</button>
+                ))}
+              </div>
+              <p className="tx-cat">Показаны первые 12 моделей. Если нужной нет — впиши её название вручную ниже.</p>
+            </>
+          )}
+          <label className="field-label">Название модели (вручную)</label>
+          <input className="text-input" value={model} onChange={e => setModel(e.target.value)} placeholder={kind === 'vision' ? 'например: openai/gpt-4o-vision…' : 'например: deepseek/deepseek-chat…'} />
         </>
       ) : (
         <>
@@ -1069,6 +1086,34 @@ function SettingsModal({ onClose, onResetAccess }: any) {
   const [visionKey, setVisionKey] = useState('')
   const [textKey, setTextKey] = useState('')
   const [saved, setSaved] = useState(false)
+  const [customModels, setCustomModels] = useArtifactState('ai_custom_models', [] as { id: string; vision: boolean }[])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelError, setModelError] = useState('')
+
+  const loadCustomModels = async () => {
+    const url = (customUrl || '').trim().replace(/\/+$/, '')
+    if (!url) { setModelError('Сначала впиши Base URL агрегатора'); return }
+    setLoadingModels(true)
+    setModelError('')
+    try {
+      const res = await fetch(url + '/models', { headers: { Authorization: visionKey ? 'Bearer ' + visionKey : (textKey ? 'Bearer ' + textKey : '') } })
+      if (!res.ok) throw new Error(String(res.status))
+      const json = await res.json()
+      const list = (json.data || [])
+        .map((m: any) => {
+          const id = (m.id || m.name || '').trim()
+          if (!id) return null
+          const vision = m.support_vision === true || /vision|multimodal|moondream|qwen2-vl|\bvl\b|minicpm-v|\bglm-4v\b|llava/i.test(id)
+          return { id, vision }
+        })
+        .filter(Boolean) as { id: string; vision: boolean }[]
+      setCustomModels(list)
+      if (!list.length) setModelError('Список пуст — возможно, у агрегатора другой формат ответа. Название можно вписать вручную.')
+    } catch {
+      setModelError('Не удалось загрузить модели. Название можно вписать вручную.')
+    }
+    setLoadingModels(false)
+  }
 
   const save = () => {
     setSaved(true)
@@ -1105,6 +1150,8 @@ function SettingsModal({ onClose, onResetAccess }: any) {
             model={visionModel} setModel={setVisionModel}
             keyVal={visionKey} setKeyVal={setVisionKey}
             customUrl={customUrl} setCustomUrl={setCustomUrl}
+            kind="vision"
+            customModels={customModels} loadingModels={loadingModels} modelError={modelError} onLoadModels={loadCustomModels}
           />
 
           <ModelChannel
@@ -1116,6 +1163,8 @@ function SettingsModal({ onClose, onResetAccess }: any) {
             model={textModel} setModel={setTextModel}
             keyVal={textKey} setKeyVal={setTextKey}
             customUrl={customUrl} setCustomUrl={setCustomUrl}
+            kind="text"
+            customModels={customModels} loadingModels={loadingModels} modelError={modelError} onLoadModels={loadCustomModels}
           />
 
           <div className="card">

@@ -407,3 +407,6 @@ body { font-family: var(--font); }
 .lock-err { font-size: 13px; color: #f43f5e; margin-top: 8px; }
 .secret-box { font-family: ui-monospace, Consolas, monospace; font-size: 14px; letter-spacing: 1px; background: var(--bg); border: 1px dashed var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; word-break: break-all; user-select: all; color: var(--text); }
 .totp-setup { margin-top: 10px; }
+.model-load-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.model-chips .chip { max-width: 100%; }
