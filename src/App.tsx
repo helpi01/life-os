@@ -1282,8 +1282,11 @@ function SettingsModal({ onClose, onResetAccess }: any) {
         .filter(Boolean) as { id: string; vision: boolean }[]
       setCustomModels(list)
       if (!list.length) setModelError('Список пуст — возможно, у агрегатора другой формат ответа. Название можно вписать вручную.')
-    } catch {
-      setModelError('Не удалось загрузить модели. Название можно вписать вручную.')
+    } catch (e) {
+      const status = e instanceof Error && /^[0-9]+$/.test(e.message) ? Number(e.message) : null
+      if (status === 401) setModelError('API требует ключ (401 Unauthorized): введи API-ключ в поле ниже и проверь Base URL. Для ai.wormsoft.ru это https://ai.wormsoft.ru/api/gpt')
+      else if (status === 404) setModelError('Маршрут /models не найден (404): проверь Base URL — нужен путь до раздела API, например https://ai.wormsoft.ru/api/gpt (без /v1 и без слеша в конце)')
+      else setModelError('Не удалось загрузить модели' + (status ? ' (код ' + status + ')' : '') + '. Проверь Base URL и ключ; название можно вписать вручную.')
     }
     setLoadingModels(false)
   }
