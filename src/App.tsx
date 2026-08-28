@@ -1060,7 +1060,7 @@ function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvide
   )
 }
 
-function SettingsModal({ onClose }: { onClose: () => void }) {
+function SettingsModal({ onClose, onResetAccess }: any) { 
   const [visionProvider, setVisionProvider] = useArtifactState('ai_vision_provider', 'gemini')
   const [visionModel, setVisionModel] = useArtifactState('ai_vision_model', 'gemini-2.5-flash')
   const [textProvider, setTextProvider] = useArtifactState('ai_text_provider', 'deepseek')
@@ -1129,6 +1129,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <div className="card-head"><h3>Данные</h3><span className="chip">Этот браузер</span></div>
             <p className="settings-hint">Все показания хранятся только в этом браузере на этом устройстве. Сброс удалит расходы, тренировки, привычки и настройки.</p>
             <button className="btn danger" onClick={resetAll}><Trash2 size={16} /> Сбросить все данные</button>
+            <button className="btn danger" style={{ marginTop: 8, background: 'transparent' }} onClick={() => { onResetAccess(); onClose() }}><KeyRound size={16} /> Сменить пароль / сбросить доступ</button>
           </div>
         </div>
 
@@ -1324,6 +1325,215 @@ const PLAN = [
   { week: 'Неделя 4 · Результат', tasks: ['Финальный рывок', 'Подвести итоги', 'Закрепить привычку'] },
 ]
 
+/* ---------- access lock (пароль / Google Authenticator) ---------- */
+
+type AuthCfg = { hash: string; salt: string; totpSecret?: string }
+
+const B32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+function base32Decode(s: string): Uint8Array {
+  const clean = s.toUpperCase().replace(/[^A-Z2-7]/g, '')
+  let bits = 0, value = 0
+  const out: number[] = []
+  for (const ch of clean) {
+    value = (value << 5) | B32_ALPHABET.indexOf(ch)
+    bits += 5
+    if (bits >= 8) { out.push((value >>> (bits - 8)) & 0xff); bits -= 8 }
+  }
+  return new Uint8Array(out)
+}
+
+function base32Encode(bytes: Uint8Array): string {
+  let bits = 0, value = 0, out = ''
+  for (const b of bytes) {
+    value = (value << 8) | b
+    bits += 8
+    while (bits >= 5) { out += B32_ALPHABET[(value >>> (bits - 5)) & 31]; bits -= 5 }
+  }
+  if (bits > 0) out += B32_ALPHABET[(value << (5 - bits)) & 31]
+  return out
+}
+
+const randBytes = (n: number) => { const a = new Uint8Array(n); crypto.getRandomValues(a); return a }
+const strBytes = (s: string) => new TextEncoder().encode(s)
+const bytesHex = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('')
+
+function sha1(msg: Uint8Array): Uint8Array {
+  const bitLen = msg.length * 8
+  const padded = new Uint8Array((((msg.length + 8) >> 6) + 1) << 6)
+  padded.set(msg)
+  padded[msg.length] = 0x80
+  const dv = new DataView(padded.buffer)
+  dv.setUint32(padded.length - 4, Math.floor(bitLen / 0x100000000), false)
+  dv.setUint32(padded.length - 8, bitLen >>> 0, false)
+  let h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0
+  const w = new Uint32Array(80)
+  const rotl = (x: number, n: number) => ((x << n) | (x >>> (32 - n))) >>> 0
+  for (let i = 0; i < padded.length; i += 64) {
+    for (let j = 0; j < 16; j++) w[j] = dv.getUint32(i + j * 4, false)
+    for (let j = 16; j < 80; j++) w[j] = rotl(w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16], 1)
+    let a = h0, b = h1, c = h2, d = h3, e = h4
+    for (let j = 0; j < 80; j++) {
+      let f: number, k: number
+      if (j < 20) { f = (b & c) | (~b & d); k = 0x5A827999 }
+      else if (j < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1 }
+      else if (j < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC }
+      else { f = b ^ c ^ d; k = 0xCA62C1D6 }
+      const t = (rotl(a, 5) + f + e + k + w[j]) >>> 0
+      e = d; d = c; c = rotl(b, 30); b = a; a = t
+    }
+    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0
+  }
+  const out = new Uint8Array(20)
+  const od = new DataView(out.buffer)
+  od.setUint32(0, h0, false); od.setUint32(4, h1, false); od.setUint32(8, h2, false); od.setUint32(12, h3, false); od.setUint32(16, h4, false)
+  return out
+}
+
+function hmacSha1(key: Uint8Array, msg: Uint8Array): Uint8Array {
+  const block = 64
+  const k = key.length > block ? sha1(key) : key
+  const kp = new Uint8Array(block)
+  kp.set(k)
+  const ipad = new Uint8Array(block), opad = new Uint8Array(block)
+  for (let i = 0; i < block; i++) { ipad[i] = kp[i] ^ 0x36; opad[i] = kp[i] ^ 0x5c }
+  const inner = new Uint8Array(block + msg.length)
+  inner.set(ipad); inner.set(msg, block)
+  const outer = new Uint8Array(block + 20)
+  outer.set(opad); outer.set(sha1(inner), block)
+  return sha1(outer)
+}
+
+function hashPassword(pw: string, salt: string): string {
+  let h = hmacSha1(strBytes(salt), strBytes(pw))
+  for (let i = 0; i < 500; i++) h = hmacSha1(strBytes(salt), h)
+  return bytesHex(h)
+}
+
+function totpCode(secretB32: string, at = Date.now()): string {
+  const keyData = base32Decode(secretB32)
+  const counter = Math.floor(at / 30000)
+  const buf = new Uint8Array(8)
+  new DataView(buf.buffer).setUint32(4, counter, false)
+  const sig = hmacSha1(keyData, buf)
+  const off = sig[19] & 0x0f
+  const code = ((sig[off] & 0x7f) * 0x1000000 + sig[off + 1] * 0x10000 + sig[off + 2] * 0x100 + sig[off + 3]) % 1000000
+  return String(code).padStart(6, '0')
+}
+
+function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
+  const [pw, setPw] = useState('')
+  const [wantTotp, setWantTotp] = useState(false)
+  const [ownSecret, setOwnSecret] = useState(false)
+  const [secret] = useState(() => base32Encode(randBytes(20)))
+  const [userSecret, setUserSecret] = useState('')
+  const [code, setCode] = useState('')
+  const [err, setErr] = useState('')
+
+  const effSecret = ownSecret ? userSecret.replace(/\s/g, '').toUpperCase() : secret
+  const c = code.replace(/\s/g, '')
+  const codeOk = effSecret.length >= 16 && /^[A-Z2-7]+$/.test(effSecret) && c.length === 6 && [0, 1].some(o => totpCode(effSecret, Date.now() - o * 30000) === c)
+
+  const save = () => {
+    if (pw.length < 4) { setErr('Пароль должен быть не короче 4 символов'); return }
+    if (wantTotp && !codeOk) { setErr('Введи текущий 6-значный код из Google Authenticator'); return }
+    const salt = bytesHex(randBytes(8))
+    onDone({ hash: hashPassword(pw, salt), salt, totpSecret: wantTotp ? effSecret : undefined })
+  }
+
+  return (
+    <div className="app lock-screen">
+      <div className="lock-card">
+        <div className="logo" style={{ justifyContent: 'center', paddingBottom: 6 }}>
+          <div className="logo-mark"><Sparkles size={18} /></div><span>Life OS</span>
+        </div>
+        <h2>Настройка доступа</h2>
+        <p className="lock-hint">Приложение только для тебя. Придумай пароль — он откроет доступ на 7 дней, потом попросит снова. На телефоне при первом входе введи тот же пароль.</p>
+
+        <label className="field-label">Пароль</label>
+        <input className="text-input" type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Придумай пароль (мин. 4 символа)" />
+
+        <div className="track-row" style={{ margin: '6px 0 4px' }}>
+          <div className="track-info">
+            <span className="tx-name">Google Authenticator</span>
+            <span className="tx-cat">дополнительный код из приложения</span>
+          </div>
+          <div className={`toggle ${wantTotp ? 'on' : ''}`} onClick={() => setWantTotp(w => !w)}><span /></div>
+        </div>
+
+        {wantTotp && (
+          <div className="totp-setup">
+            <div className="timeframe" style={{ marginBottom: 10 }}>
+              <button className={`chip click ${!ownSecret ? 'sel' : ''}`} onClick={() => setOwnSecret(false)}>Новый секрет</button>
+              <button className={`chip click ${ownSecret ? 'sel' : ''}`} onClick={() => setOwnSecret(true)}>Ввести свой</button>
+            </div>
+            {ownSecret ? (
+              <input className="text-input" value={userSecret} onChange={e => setUserSecret(e.target.value)} placeholder="Вставь секрет (Base32)" />
+            ) : (
+              <>
+                <div className="secret-box">{(secret.match(/.{1,4}/g) || []).join(' ')}</div>
+                <p className="tx-cat">Добавь секрет в Google Authenticator: «+» → «Ввести ключ настройки» — затем введи текущий код ниже.</p>
+              </>
+            )}
+            <label className="field-label">Код из Authenticator (для проверки)</label>
+            <input className="text-input" inputMode="numeric" value={code} onChange={e => setCode(e.target.value)} placeholder="6 цифр" />
+            {effSecret.length >= 16 && c.length === 6 && !codeOk && <p className="lock-err">Код не совпадает — проверь и попробуй ещё раз</p>}
+          </div>
+        )}
+
+        {err && <p className="lock-err">{err}</p>}
+        <button className="btn primary full save-btn" data-genui-primary-action onClick={save} disabled={pw.length < 4 || (wantTotp && !codeOk)}>Сохранить доступ</button>
+        <p className="tx-cat" style={{ marginTop: 10, textAlign: 'center' }}>Если забудешь пароль — очисти данные сайта в браузере (вместе с данными приложения).</p>
+      </div>
+    </div>
+  )
+}
+
+function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) => void }) {
+  const [pw, setPw] = useState('')
+  const [code, setCode] = useState('')
+  const [err, setErr] = useState('')
+  const [days, setDays] = useState(7)
+
+  const unlock = () => {
+    const c = code.replace(/\s/g, '').toUpperCase()
+    if (hashPassword(pw, cfg.salt) === cfg.hash) { onUnlock(days); return }
+    if (cfg.totpSecret && c.length === 6 && [0, 1].some(o => totpCode(cfg.totpSecret!, Date.now() - o * 30000) === c)) { onUnlock(days); return }
+    setErr('Неверный пароль или код')
+  }
+
+  return (
+    <div className="app lock-screen">
+      <div className="lock-card">
+        <div className="logo" style={{ justifyContent: 'center', paddingBottom: 6 }}>
+          <div className="logo-mark"><Sparkles size={18} /></div><span>Life OS</span>
+        </div>
+        <h2>Доступ закрыт</h2>
+        <p className="lock-hint">Введи пароль{cfg.totpSecret ? ' или код из Google Authenticator' : ''}, чтобы открыть приложение.</p>
+
+        <label className="field-label">Пароль</label>
+        <input className="text-input" type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && unlock()} placeholder="Твой пароль" />
+
+        {cfg.totpSecret && (
+          <>
+            <label className="field-label">Код из Authenticator</label>
+            <input className="text-input" inputMode="numeric" value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === 'Enter' && unlock()} placeholder="6 цифр" />
+          </>
+        )}
+
+        <div className="timeframe" style={{ margin: '12px 0 4px' }}>
+          {[{ d: 1, l: '1 день' }, { d: 7, l: '7 дней' }, { d: 30, l: '30 дней' }].map(o => (
+            <button key={o.d} className={`chip click ${days === o.d ? 'sel' : ''}`} onClick={() => setDays(o.d)}>{o.l}</button>
+          ))}
+        </div>
+
+        {err && <p className="lock-err">{err}</p>}
+        <button className="btn primary full save-btn" data-genui-primary-action onClick={unlock}>Войти</button>
+      </div>
+    </div>
+  )
+}
+
 /* ---------- app shell ---------- */
 
 const VIEWS: Record<string, any> = { dashboard: Dashboard, finance: Finance, invest: Investments, sport: Sport, habits: Habits, plans: Plans, health: Health, food: Food, ai: AI }
@@ -1335,7 +1545,7 @@ const QUICK = [
   { label: 'Вес', tab: 'health', icon: HeartPulse, tone: 'blue' },
 ]
 
-export default function App() {
+function AppContent({ onResetAccess }: any) {
   const [theme, setTheme] = useArtifactState('theme', 'dark')
   const [tab, setTab] = useArtifactState('tab', 'dashboard')
   const [quick, setQuick] = useState(false)
@@ -1416,7 +1626,7 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onResetAccess={onResetAccess} />}
       </AnimatePresence>
 
       <nav className="bottom-nav">
@@ -1431,4 +1641,24 @@ export default function App() {
       </nav>
     </div>
   )
+}
+
+export default function App() {
+  const [auth, setAuth] = useArtifactState('lifeos_auth', null as AuthCfg | null)
+  const [authUntil, setAuthUntil] = useArtifactState('lifeos_auth_until', 0)
+
+  const resetAccess = () => {
+    setAuth(null)
+    setAuthUntil(0)
+  }
+
+  if (!auth) {
+    return <AccessSetup onDone={(cfg) => { setAuth(cfg); setAuthUntil(Date.now() + 7 * 86400000) }} />
+  }
+
+  if (Date.now() > authUntil) {
+    return <AccessLock cfg={auth} onUnlock={(days) => setAuthUntil(Date.now() + days * 86400000)} />
+  }
+
+  return <AppContent onResetAccess={resetAccess} />
 }

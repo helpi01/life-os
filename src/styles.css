@@ -398,3 +398,12 @@ body { font-family: var(--font); }
 .danger-zone .settings-hint { margin-bottom: 12px; }
 .btn.danger { width: 100%; justify-content: center; background: #f43f5e22; color: #f43f5e; border: 1px solid #f43f5e44; }
 .btn.danger:hover { background: #f43f5e33; }
+
+/* Access lock */
+.lock-screen { display: grid; place-items: center; min-height: 100vh; padding: 20px; background: var(--bg); }
+.lock-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 24px; box-shadow: var(--shadow); }
+.lock-card h2 { font-size: 20px; margin-bottom: 4px; }
+.lock-hint { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 8px 0 16px; }
+.lock-err { font-size: 13px; color: #f43f5e; margin-top: 8px; }
+.secret-box { font-family: ui-monospace, Consolas, monospace; font-size: 14px; letter-spacing: 1px; background: var(--bg); border: 1px dashed var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; word-break: break-all; user-select: all; color: var(--text); }
+.totp-setup { margin-top: 10px; }
