@@ -407,6 +407,30 @@ body { font-family: var(--font); }
 .lock-err { font-size: 13px; color: #f43f5e; margin-top: 8px; }
 .secret-box { font-family: ui-monospace, Consolas, monospace; font-size: 14px; letter-spacing: 1px; background: var(--bg); border: 1px dashed var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; word-break: break-all; user-select: all; color: var(--text); }
 .totp-setup { margin-top: 10px; }
+
+/* Промпты ИИ */
+.prompt-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.prompt-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.prompt-row textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px; color: var(--text); font-size: 13px; resize: vertical; min-height: 64px; font-family: inherit; }
+
+/* Достижения и XP */
+.ach.on { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
+
+/* Бюджеты и нормы */
+.budget-list { display: flex; flex-direction: column; gap: 12px; }
+.budget-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.budget-bar { height: 8px; border-radius: 99px; background: var(--bg); overflow: hidden; }
+.budget-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width .4s; }
+.budget-fill.over { background: #f43f5e; }
+.budget-row.over .tx-cat, .over-txt { color: #f43f5e; }
+.budget-over { font-size: 12px; color: #f43f5e; }
+.calorie-bar-wrap { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Экспорт/импорт */
+.import-actions { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.import-actions .btn { width: 100%; justify-content: center; }
+.import-actions .tx-cat { margin: 0; }
+
 .model-load-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .model-chips .chip { max-width: 100%; }

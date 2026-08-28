@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useArtifactState } from './dsh-sdk-shim'
 import {
@@ -8,12 +8,19 @@ import {
   Camera, ScanLine, Loader2, CheckCircle2, ImagePlus, ListTodo, Target, CalendarDays,
   Settings, Crown, Flag, KeyRound, Eye, EyeOff, Check,
   MessageSquare, LineChart, Landmark, Coins, RefreshCw, Trash2,
+  Download, Upload, Star,
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer,
-  XAxis, YAxis, Tooltip, CartesianGrid,
+  XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line,
 } from 'recharts'
 import { CATEGORIES, MEALS, TYPES, HABIT_META } from './data'
+import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
+import { levelFor, XPS, ACHIEVEMENTS } from './gamification'
+import type { Stats } from './gamification'
+import { categorySpends } from './budgets'
+import type { Budgets } from './budgets'
+import { downloadBackup, parseBackupFile, applyBackup, bmi, weightTrend, calorieProgress } from './dataUtils'
 import type { Tx, Workout, Habit, FoodEntry, Task, Holding, Dividend, Quest, WeightEntry } from './data'
 
 const NAV = [
@@ -170,14 +177,7 @@ const INSIGHTS = [
   'Подключи ИИ в настройках — тогда он начнёт анализировать расходы, питание и тренировки.',
 ]
 
-const ACHIEVEMENTS = [
-  { id: 1, name: 'Первая тренировка', icon: Dumbbell },
-  { id: 2, name: '7 дней подряд', icon: Flame },
-  { id: 3, name: 'Первая неделя учёта', icon: CalendarDays },
-  { id: 4, name: 'Накопил 10 000 ₽', icon: Wallet },
-  { id: 5, name: 'Прочитал 5 книг', icon: BookOpen },
-  { id: 6, name: 'Пробежал 10 км', icon: Activity },
-]
+const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: CalendarDays, activity: Activity, dumbbell: Dumbbell, book: BookOpen, crown: Crown, star: Star }
 
 function Dashboard() {
   const [txs] = useArtifactState('lifeos_tx', [] as Tx[])
@@ -185,6 +185,8 @@ function Dashboard() {
   const [workouts] = useArtifactState('lifeos_workouts', [] as Workout[])
   const [habits] = useArtifactState('lifeos_habits', [] as Habit[])
   const [quests, setQuests] = useArtifactState('lifeos_quests', [] as Quest[])
+  const [tasks] = useArtifactState('lifeos_tasks', [] as Task[])
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
   const [addQ, setAddQ] = useState(false)
 
   const today = todayISO()
@@ -197,8 +199,22 @@ function Dashboard() {
     value: workouts.filter(w => w.date === day.iso).reduce((s, w) => s + w.durMin, 0),
   }))
 
+  const lv = levelFor(xp)
+  const stats: Stats = {
+    tasksDone: tasks.filter(t => t.done).length,
+    habitsDone: doneHabits,
+    habitsStreakBest: habits.reduce((m, h) => Math.max(m, h.streak), 0),
+    habitsTotal: habits.length,
+    workouts: workouts.length,
+    txs: txs.length,
+    savedR: txs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0),
+    level: lv.level,
+  }
+  const unlocked = ACHIEVEMENTS.filter(a => a.test(stats)).map(a => a.id)
+
   const addQuest = (v: Record<string, string>) => {
     setQuests(q => [...q, { id: Date.now(), name: v.name, total: Math.max(1, Number(v.total) || 1) }])
+    setXp(x => x + XPS.questCreated)
     setAddQ(false)
   }
 
@@ -223,16 +239,17 @@ function Dashboard() {
         <div className="level-info">
           <div className="level-badge"><Crown size={22} /></div>
           <div className="level-body">
-            <div className="level-title"><span>Уровень 1</span><span className="level-rank">Новичок</span></div>
-            <div className="xp-bar"><div className="xp-fill" style={{ width: '0%' }} /></div>
-            <span className="stat-sub">Веди учёт — получай XP за задачи и привычки</span>
+            <div className="level-title"><span>Уровень {lv.level}</span><span className="level-rank">{lv.name}</span></div>
+            <div className="xp-bar"><div className="xp-fill" style={{ width: lv.pct + '%' }} /></div>
+            <span className="stat-sub">{fmt(xp)} XP · ещё {fmt(Math.max(0, lv.nextXp - xp))} XP до уровня {lv.level + 1}</span>
           </div>
         </div>
         <div className="achievements">
           {ACHIEVEMENTS.map(a => {
-            const I = a.icon
+            const I = achIcons[a.icon]
+            const on = unlocked.includes(a.id)
             return (
-              <div key={a.id} className="ach" title={a.name}>
+              <div key={a.id} className={`ach ${on ? 'on' : ''}`} title={on ? a.name + ' — открыто!' : a.name + ' — ' + a.hint}>
                 <I size={18} />
               </div>
             )
@@ -334,6 +351,9 @@ function Dashboard() {
 function Finance() {
   const [txs, setTxs] = useArtifactState('lifeos_tx', [] as Tx[])
   const [adding, setAdding] = useState(false)
+  const [budgets, setBudgets] = useArtifactState('lifeos_budgets', {} as Budgets)
+  const [addBudget, setAddBudget] = useState(false)
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
   const thisMonth = monthOf(todayISO())
   const monthExpenses = txs.filter(t => t.amount < 0 && monthOf(t.date) === thisMonth)
@@ -351,9 +371,11 @@ function Finance() {
   const pie = CATEGORIES
     .map(c => ({ name: c.name, color: c.color, value: monthExpenses.filter(t => t.cat === c.name).reduce((s, t) => s - t.amount, 0) }))
     .filter(c => c.value > 0)
+  const spends = categorySpends(txs, budgets)
 
   const addTx = (v: Record<string, string>) => {
     setTxs(t => [{ id: Date.now(), name: v.name, cat: v.cat, amount: -Math.abs(Number(v.amount)), date: todayISO() }, ...t])
+    setXp(x => x + XPS.txAdded)
     setAdding(false)
   }
 
@@ -417,6 +439,26 @@ function Finance() {
       </div>
 
       <div className="card">
+        <div className="card-head"><h3>Бюджеты по категориям</h3><button className="btn primary sm" onClick={() => setAddBudget(true)}>+ Лимит</button></div>
+        {spends.length === 0 ? (
+          <Empty text="Добавь месячные лимиты на категории — приложение предупредит, когда начнётся перерасход" />
+        ) : (
+          <div className="budget-list">
+            {spends.map(s => (
+              <div key={s.name} className={`budget-row ${s.over ? 'over' : ''}`}>
+                <div className="budget-head">
+                  <span className="tx-name">{s.name}</span>
+                  <span className="tx-cat">{fmt(s.spent)} ₽{s.limit ? ' из ' + fmt(s.limit) + ' ₽' : ''}</span>
+                </div>
+                {s.limit && <div className="budget-bar"><div className={`budget-fill ${s.over ? 'over' : ''}`} style={{ width: Math.min(100, s.pct) + '%' }} /></div>}
+                {s.over && <span className="budget-over">Перерасход на {fmt(s.spent - s.limit!)} ₽</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
         <div className="card-head"><h3>Операции</h3><span className="chip">{txs.length}</span></div>
         {txs.length === 0 ? (
           <Empty text="Здесь появятся твои расходы. Добавь первую запись — это займёт 10 секунд" action={<button className="btn primary sm" onClick={() => setAdding(true)}>+ Добавить расход</button>} />
@@ -432,6 +474,19 @@ function Finance() {
           </div>
         )}
       </div>
+
+      {addBudget && (
+        <EntryModal
+          title="Лимит на категорию"
+          fields={[
+            { key: 'cat', label: 'Категория', type: 'select', options: CATEGORIES.map(c => ({ value: c.name, label: c.name })) },
+            { key: 'limit', label: 'Лимит в месяц, ₽', type: 'number', placeholder: '10000' },
+          ]}
+          submitLabel="Сохранить лимит"
+          onSubmit={(v) => setBudgets(b => ({ ...b, [v.cat]: Math.max(0, Number(v.limit)) }))}
+          onClose={() => setAddBudget(false)}
+        />
+      )}
 
       {adding && (
         <EntryModal
@@ -465,21 +520,39 @@ function Investments() {
   const divSum = dividends.reduce((s, d) => s + d.amount, 0)
   const typeColor = (t: string) => (t === 'Облигация' ? '#6366f1' : t === 'Фонд' ? '#f59e0b' : '#10b981')
 
-  const refresh = () => {
+  const refresh = async () => {
     if (checking) return
     setChecking(true)
     setUpdated(false)
-    setTimeout(() => {
-      setChecking(false)
+    const portfolio = holdings.filter(h => h.qty > 0)
+    if (!portfolio.length) {
+      setSignals(s => [...s, { ticker: '—', action: 'Держать', confidence: 50, reason: 'Добавь активы в портфель — и ИИ даст сигнал по ним' }])
+      setNews(n => [{ title: 'Портфель пока пуст — добавь активы, чтобы ИИ мог анализировать рынок', source: 'ИИ-аналитика', time: 'только что', sentiment: 'neutral' }, ...n])
       setUpdated(true)
-      setNews(n => [{ title: 'ИИ ещё не подключён — это демо-строка. Подключи модель в настройках.', source: 'Демо', time: 'только что', sentiment: 'neutral' }, ...n])
-      setSignals(s => [...s, {
-        ticker: holdings.length ? holdings[0].ticker : '—',
-        action: 'Держать',
-        confidence: 60,
-        reason: holdings.length ? 'Демо-сигнал: точные сигналы появятся после подключения ИИ' : 'Добавь активы, чтобы ИИ мог давать сигналы',
-      }])
-    }, 1700)
+      setChecking(false)
+      return
+    }
+    try {
+      const settings = getAiSettings('text')
+      const prompts = loadPrompts()
+      const promptDef = PROMPTS.find(p => p.id === 'invest')
+      const sys = prompts.invest || (promptDef ? promptDef.text : '')
+      const desc = portfolio.map(h => `- ${h.name} (${h.ticker || '—'}), ${h.type}, ${h.qty} шт по ${h.price} ₽ ≈ ${fmt(h.price * h.qty)} ₽`).join('\n')
+      const res = await chatJson<{ action: string; confidence: number; reason: string }>(settings, sys, 'Мой портфель:\n' + desc + '\n\nОцени ситуацию и дай сигнал.')
+      const action = res && ['Покупать', 'Продавать'].includes(res.action) ? res.action : 'Держать'
+      const conf = Math.min(100, Math.max(0, Math.round(Number(res.confidence) || 50)))
+      const reason = res && res.reason ? res.reason : 'Оценка ИИ по портфелю'
+      setSignals(s => [{ ticker: portfolio[0].ticker || '—', action, confidence: conf, reason }, ...s])
+      setNews(n => [{ title: 'ИИ проанализировал портфель: «' + reason + '»', source: 'ИИ-аналитика', time: 'только что', sentiment: action === 'Продавать' ? 'negative' : action === 'Покупать' ? 'positive' : 'neutral' }, ...n])
+    } catch (e) {
+      if (e instanceof AiNotConfigured) {
+        setSignals(s => [...s, { ticker: portfolio[0].ticker || '—', action: 'Держать', confidence: 50, reason: 'ИИ не подключён — подключи текстовую модель в настройках' }])
+      } else {
+        setNews(n => [{ title: 'Не удалось получить ответ ИИ: ' + (e instanceof Error ? e.message : 'ошибка'), source: 'Система', time: 'только что', sentiment: 'neutral' }, ...n])
+      }
+    }
+    setUpdated(true)
+    setChecking(false)
   }
 
   const addHolding = (v: Record<string, string>) => {
@@ -646,6 +719,7 @@ function Investments() {
 function Sport() {
   const [workouts, setWorkouts] = useArtifactState('lifeos_workouts', [] as Workout[])
   const [adding, setAdding] = useState(false)
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
   const week = workouts.filter(w => diffDays(w.date) < 7)
   const weekKcal = week.reduce((s, w) => s + w.kcal, 0)
@@ -653,6 +727,7 @@ function Sport() {
 
   const addWorkout = (v: Record<string, string>) => {
     setWorkouts(w => [{ id: Date.now(), name: v.name, date: todayISO(), durMin: Number(v.durMin), kcal: Number(v.kcal) }, ...w])
+    setXp(x => x + XPS.workoutAdded)
     setAdding(false)
   }
 
@@ -702,6 +777,7 @@ function Sport() {
 function Habits() {
   const [habits, setHabits] = useArtifactState('lifeos_habits', [] as Habit[])
   const [adding, setAdding] = useState(false)
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
   const done = habits.filter(h => h.done).length
   const bestStreak = habits.reduce((m, h) => Math.max(m, h.streak), 0)
@@ -710,7 +786,11 @@ function Habits() {
     setHabits(h => [...h, { id: Date.now(), name: v.name, icon: v.icon, done: false, streak: 0 }])
     setAdding(false)
   }
-  const toggle = (id: number) => setHabits(h => h.map(x => x.id === id ? { ...x, done: !x.done, streak: x.done ? x.streak : x.streak + 1 } : x))
+  const toggle = (id: number) => {
+    const h = habits.find(x => x.id === id)
+    if (h && !h.done) setXp(x => x + XPS.habitDone)
+    setHabits(hs => hs.map(x => x.id === id ? { ...x, done: !x.done, streak: x.done ? x.streak : x.streak + 1 } : x))
+  }
 
   return (
     <div className="view">
@@ -760,6 +840,7 @@ function Habits() {
 function Plans({ onPlan }: any) {
   const [tasks, setTasks] = useArtifactState('lifeos_tasks', [] as Task[])
   const [adding, setAdding] = useState(false)
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
   const done = tasks.filter(t => t.done).length
 
@@ -767,7 +848,11 @@ function Plans({ onPlan }: any) {
     setTasks(t => [{ id: Date.now(), name: v.name, done: false, prio: v.prio }, ...t])
     setAdding(false)
   }
-  const toggle = (id: number) => setTasks(t => t.map(x => x.id === id ? { ...x, done: !x.done } : x))
+  const toggle = (id: number) => {
+    const t = tasks.find(x => x.id === id)
+    if (t && !t.done) setXp(x => x + XPS.taskDone)
+    setTasks(ts => ts.map(x => x.id === id ? { ...x, done: !x.done } : x))
+  }
 
   return (
     <div className="view">
@@ -828,9 +913,11 @@ function Health() {
   const [history, setHistory] = useState(false)
   const [input, setInput] = useState('')
   const [saved, setSaved] = useState(false)
+  const [height, setHeight] = useArtifactState('health_height', '')
 
   const current = log.length ? log[0].value : null
   const change = log.length > 1 ? Math.round((log[0].value - log[log.length - 1].value) * 10) / 10 : null
+  const bmiV = current !== null && height && Number(height) > 0 ? bmi(current, Number(height)) : null
 
   const saveWeight = () => {
     const num = Number(input.replace(',', '.'))
@@ -846,9 +933,10 @@ function Health() {
       <h1>Здоровье</h1>
       <p className="sub">Вес и самочувствие · без подключения часов</p>
 
-      <div className="grid-3">
+      <div className="grid-4">
         <StatCard icon={Activity} label="Текущий вес" value={current === null ? '—' : current + ' кг'} sub={change === null ? 'запиши первый вес' : (change > 0 ? '+' : '') + change + ' кг по записям'} tone="violet" />
         <StatCard icon={Target} label="Цель" value={goal ? goal + ' кг' : '—'} sub="задай в карточке ниже" tone="green" />
+        <StatCard icon={Activity} label="ИМТ" value={bmiV === null ? '—' : String(bmiV)} sub={bmiV === null ? 'укажи рост ниже' : (bmiV < 18.5 ? 'ниже нормы' : bmiV < 25 ? 'в норме' : bmiV < 30 ? 'выше нормы' : 'высокий')} tone="orange" />
         <StatCard icon={CalendarDays} label="Записей" value={String(log.length)} sub="история ведётся автоматически" tone="blue" />
       </div>
 
@@ -866,6 +954,13 @@ function Health() {
           <div className="weight-input-wrap">
             <input type="number" step="0.1" inputMode="decimal" className="weight-input" value={goal} onChange={e => setGoal(e.target.value)} placeholder="75" />
             <span className="weight-unit">кг</span>
+          </div>
+        </div>
+        <label className="field-label">Рост (для ИМТ)</label>
+        <div className="weight-row">
+          <div className="weight-input-wrap">
+            <input type="number" step="1" inputMode="decimal" className="weight-input" value={height} onChange={e => setHeight(e.target.value)} placeholder="178" />
+            <span className="weight-unit">см</span>
           </div>
         </div>
         <p className="weight-note">Фитнес-часы не подключаются — просто вноси вес сам, без лишней настройки.</p>
@@ -889,6 +984,25 @@ function Health() {
       </div>
 
       <div className="card">
+        <div className="card-head"><h3>Динамика веса</h3><span className="chip">кг</span></div>
+        {log.length < 2 ? (
+          <Empty text="Запиши вес хотя бы два раза — и график появится здесь" />
+        ) : (
+          <div className="chart">
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={weightTrend(log)}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" vertical={false} />
+                <XAxis dataKey="d" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+                <YAxis domain={['dataMin - 1', 'dataMax + 1']} hide />
+                <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--text)' }} />
+                <Line type="monotone" dataKey="v" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: '#6366f1' }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
         <div className="card-head"><h3>Настроение</h3></div>
         <div className="mood-row">
           {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d, i) => (
@@ -903,6 +1017,8 @@ function Health() {
 function Food({ onScan }: any) {
   const [food, setFood] = useArtifactState('lifeos_food', [] as FoodEntry[])
   const [adding, setAdding] = useState(false)
+  const [calGoal, setCalGoal] = useArtifactState('food_cal_goal', '')
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
   const today = todayISO()
   const todayFood = food.filter(f => f.date === today)
@@ -910,6 +1026,7 @@ function Food({ onScan }: any) {
 
   const addFood = (v: Record<string, string>) => {
     setFood(f => [{ id: Date.now(), name: v.name, meal: v.meal, kcal: Number(v.kcal), date: today }, ...f])
+    setXp(x => x + XPS.foodLogged)
     setAdding(false)
   }
 
@@ -923,15 +1040,33 @@ function Food({ onScan }: any) {
         <StatCard icon={BookOpen} label="Записей всего" value={String(food.length)} sub="дневник питания" tone="blue" />
       </div>
       <div className="card">
+        <div className="card-head"><h3>Норма калорий в день</h3></div>
+        <div className="weight-row">
+          <div className="weight-input-wrap">
+            <input type="number" inputMode="decimal" className="weight-input" value={calGoal} onChange={e => setCalGoal(e.target.value)} placeholder="2200" />
+            <span className="weight-unit">ккал</span>
+          </div>
+        </div>
+        {calGoal && Number(calGoal) > 0 && (
+          <div className="calorie-bar-wrap">
+            <div className="budget-head">
+              <span className="tx-name">Сегодня</span>
+              <span className={`tx-cat ${todayKcal > Number(calGoal) ? 'over-txt' : ''}`}>{fmt(todayKcal)} из {fmt(Number(calGoal))} ккал · {calorieProgress(todayKcal, Number(calGoal))}%</span>
+            </div>
+            <div className="budget-bar"><div className={`budget-fill ${todayKcal > Number(calGoal) ? 'over' : ''}`} style={{ width: Math.min(100, calorieProgress(todayKcal, Number(calGoal))) + '%' }} /></div>
+          </div>
+        )}
+      </div>
+      <div className="card">
         <div className="card-head">
           <h3>Дневник питания</h3>
           <div className="add-btn-row">
-            <button className="btn scan sm" onClick={() => onScan('food')}><ImagePlus size={15} /> Фото (демо)</button>
+            <button className="btn scan sm" onClick={() => onScan('food')}><ImagePlus size={15} /> Фото</button>
             <button className="btn primary sm" onClick={() => setAdding(true)}>+ Запись</button>
           </div>
         </div>
         {food.length === 0 ? (
-          <Empty text="Добавь, что сегодня съел, — или сфотографируй блюдо (распознавание станет настоящим после подключения ИИ)" action={<button className="btn primary sm" onClick={() => setAdding(true)}>+ Запись</button>} />
+          <Empty text="Добавь, что сегодня съел, — или сфотографируй блюдо: ИИ посчитает калории" action={<button className="btn primary sm" onClick={() => setAdding(true)}>+ Запись</button>} />
         ) : (
           <div className="tx-list">
             {food.map(f => (
@@ -967,11 +1102,23 @@ function AI() {
     { role: 'ai', text: 'Привет! Я твой ИИ-ассистент. Подключи меня в настройках — и я начну анализировать твои финансы, тренировки и питание.' },
   ])
   const [input, setInput] = useState('')
-  const send = () => {
-    if (!input.trim()) return
-    setMsgs(m => [...m, { role: 'user', text: input }])
+  const [thinking, setThinking] = useState(false)
+  const send = async () => {
+    const q = input.trim()
+    if (!q || thinking) return
+    setMsgs(m => [...m, { role: 'user', text: q }])
     setInput('')
-    setTimeout(() => setMsgs(m => [...m, { role: 'ai', text: 'Пока я работаю в демо-режиме. Подключи текстовую модель в настройках (шестерёнка сверху) — и я буду отвечать по твоим данным.' }]), 600)
+    setThinking(true)
+    try {
+      const settings = getAiSettings('text')
+      const prompts = loadPrompts()
+      const promptDef = PROMPTS.find(p => p.id === 'chat')
+      const reply = await chatCompletion(settings, prompts.chat || (promptDef ? promptDef.text : ''), q)
+      setMsgs(m => [...m, { role: 'ai', text: reply }])
+    } catch (e) {
+      setMsgs(m => [...m, { role: 'ai', text: e instanceof AiNotConfigured ? 'Подключи текстовую модель в настройках (шестерёнка сверху) — и я начну отвечать по-настоящему.' : 'Не удалось получить ответ: ' + (e instanceof Error ? e.message : 'ошибка') + '. Проверь модель и ключ в настройках.' }])
+    }
+    setThinking(false)
   }
   return (
     <div className="view ai-view">
@@ -985,6 +1132,12 @@ function AI() {
               <div className="bubble">{m.text}</div>
             </div>
           ))}
+          {thinking && (
+            <div className="msg ai">
+              <div className="msg-avatar"><Sparkles size={14} /></div>
+              <div className="bubble"><Loader2 size={14} className="spin" /> Думаю…</div>
+            </div>
+          )}
         </div>
         <div className="chat-input">
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder="Спроси, например: сколько я потратил на еду?" />
@@ -1083,8 +1236,28 @@ function SettingsModal({ onClose, onResetAccess }: any) {
   const [textProvider, setTextProvider] = useArtifactState('ai_text_provider', 'deepseek')
   const [textModel, setTextModel] = useArtifactState('ai_text_model', 'deepseek-chat')
   const [customUrl, setCustomUrl] = useArtifactState('ai_custom_url', '')
-  const [visionKey, setVisionKey] = useState('')
-  const [textKey, setTextKey] = useState('')
+  const [aiKeys, setAiKeys] = useArtifactState('ai_keys', { vision: '', text: '' } as { vision: string; text: string })
+  const visionKey = aiKeys.vision
+  const textKey = aiKeys.text
+  const setVisionKey = (v: string) => setAiKeys(k => ({ ...k, vision: v }))
+  const setTextKey = (v: string) => setAiKeys(k => ({ ...k, text: v }))
+  const [prompts, setPrompts] = useState<Record<string, string>>(loadPrompts)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const setPrompt = (id: string, v: string) => { savePrompt(id, v); setPrompts(p => ({ ...p, [id]: v })) }
+  const resetPrompt = (id: string) => { resetPrompts(id); setPrompts(p => { const n = { ...p }; delete n[id]; return n }) }
+  const resetAllPrompts = () => { resetPrompts(); setPrompts(loadPrompts()) }
+  const onImport = async ({ target }: { target: HTMLInputElement }) => {
+    const f = target.files?.[0]
+    if (!f) return
+    try {
+      const text = await f.text()
+      applyBackup(parseBackupFile(text))
+      alert('Данные загружены. Страница перезагрузится…')
+      location.reload()
+    } catch (err) {
+      alert('Не удалось импортировать: ' + (err instanceof Error ? err.message : 'неверный формат файла'))
+    }
+  }
   const [saved, setSaved] = useState(false)
   const [customModels, setCustomModels] = useArtifactState('ai_custom_models', [] as { id: string; vision: boolean }[])
   const [loadingModels, setLoadingModels] = useState(false)
@@ -1174,10 +1347,34 @@ function SettingsModal({ onClose, onResetAccess }: any) {
             </div>
           </div>
 
+          <div className="card">
+            <div className="card-head"><h3>Промпты ИИ</h3><span className="chip ai"><Sparkles size={13} /> ИИ</span></div>
+            <p className="settings-hint">Инструкции, по которым ИИ разбирает чеки, еду, планы, чат и портфель. Настрой под себя — сброс вернёт стандартные.</p>
+            <div className="prompt-list">
+              {PROMPTS.map(p => (
+                <div key={p.id} className="prompt-row">
+                  <div className="prompt-head">
+                    <span className="tx-name">{p.label}</span>
+                    {prompts[p.id] && <button className="icon-btn" title="Сбросить к стандартному" onClick={() => resetPrompt(p.id)}><RefreshCw size={14} /></button>}
+                  </div>
+                  <textarea rows={3} value={prompts[p.id] ?? p.text} onChange={e => setPrompt(p.id, e.target.value)} />
+                </div>
+              ))}
+            </div>
+            <button className="btn sm" style={{ width: '100%', justifyContent: 'center' }} onClick={resetAllPrompts}>Сбросить все промпты</button>
+          </div>
+
+
           <div className="card danger-zone">
             <div className="card-head"><h3>Данные</h3><span className="chip">Этот браузер</span></div>
             <p className="settings-hint">Все показания хранятся только в этом браузере на этом устройстве. Сброс удалит расходы, тренировки, привычки и настройки.</p>
             <button className="btn danger" onClick={resetAll}><Trash2 size={16} /> Сбросить все данные</button>
+            <div className="import-actions">
+              <button className="btn sm" onClick={downloadBackup}><Download size={15} /> Скачать все данные (бэкап)</button>
+              <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={onImport} />
+              <button className="btn sm" onClick={() => fileRef.current?.click()}><Upload size={15} /> Загрузить из файла</button>
+              <p className="tx-cat" style={{ textAlign: 'center' }}>Так можно перенести данные на другой телефон</p>
+            </div>
             <button className="btn danger" style={{ marginTop: 8, background: 'transparent' }} onClick={() => { onResetAccess(); onClose() }}><KeyRound size={16} /> Сменить пароль / сбросить доступ</button>
           </div>
         </div>
@@ -1193,77 +1390,134 @@ function SettingsModal({ onClose, onResetAccess }: any) {
 /* ---------- demo flows (scan / plan) ---------- */
 
 function Scanner({ type, onClose }: { type: 'receipt' | 'food', onClose: () => void }) {
-  const [step, setStep] = useState<'capture' | 'analyzing' | 'result'>('capture')
-  const start = () => {
-    setStep('analyzing')
-    setTimeout(() => setStep('result'), 1900)
-  }
+  const [step, setStep] = useState<'capture' | 'analyzing' | 'result' | 'error'>('capture')
+  const [err, setErr] = useState('')
+  const [real, setReal] = useState(false)
+  const [items, setItems] = useState(RECEIPT_ITEMS)
+  const [store, setStore] = useState('Супермаркет «Пятёрочка»')
+  const [recTotal, setRecTotal] = useState(() => RECEIPT_ITEMS.reduce((s, i) => s + i.price, 0))
+  const [recFood, setRecFood] = useState(FOOD_RESULT)
+  const fileRef = useRef<HTMLInputElement>(null)
   const isReceipt = type === 'receipt'
-  const total = RECEIPT_ITEMS.reduce((s, i) => s + i.price, 0)
+
+  const analyze = async (dataUrl: string) => {
+    setStep('analyzing')
+    try {
+      const settings = getAiSettings('vision')
+      const prompts = loadPrompts()
+      const promptDef = PROMPTS.find(p => p.id === (isReceipt ? 'receipt' : 'food'))
+      const sys = prompts[isReceipt ? 'receipt' : 'food'] || (promptDef ? promptDef.text : '')
+      const text = await chatVision(settings, sys, 'Разбери изображение и верни строго JSON по инструкции.', dataUrl)
+      const parsed = extractJson(text) as any
+      if (isReceipt) {
+        if (parsed && Array.isArray(parsed.items)) {
+          const clean = parsed.items
+            .filter((it: any) => it && typeof it.name === 'string' && Number.isFinite(Number(it.price)))
+            .map((it: any) => ({ name: String(it.name), price: Math.max(0, Math.round(Number(it.price))) }))
+          if (clean.length) setItems(clean)
+          if (parsed.store) setStore(String(parsed.store))
+          if (parsed.total || parsed.total === 0) setRecTotal(Math.max(0, Math.round(Number(parsed.total))))
+        }
+      } else if (parsed && parsed.name && Number.isFinite(Number(parsed.kcal))) {
+        setRecFood({
+          name: String(parsed.name),
+          kcal: Math.max(0, Math.round(Number(parsed.kcal))),
+          protein: Math.max(0, Math.round(Number(parsed.protein || 0))),
+          fat: Math.max(0, Math.round(Number(parsed.fat || 0))),
+          carbs: Math.max(0, Math.round(Number(parsed.carbs || 0))),
+        })
+      }
+      setReal(true)
+      setStep('result')
+    } catch (e) {
+      if (e instanceof AiNotConfigured) {
+        setReal(false)
+        setStep('result')
+      } else {
+        setErr('Не удалось распознать фото: ' + (e instanceof Error ? e.message : 'ошибка'))
+        setStep('error')
+      }
+    }
+  }
+
+  const onFile = async ({ target }: { target: HTMLInputElement }) => {
+    const f = target.files?.[0]
+    if (!f) return
+    try {
+      const dataUrl = await readFileAsDataUrl(f)
+      analyze(dataUrl)
+    } catch {
+      setErr('Не удалось прочитать файл. Попробуй другое фото.')
+      setStep('error')
+    }
+  }
 
   return (
-    <motion.div className="overlay center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-      <motion.div className="modal" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={e => e.stopPropagation()}>
-        <div className="sheet-head">
-          <h3>{isReceipt ? 'Сканер чеков' : 'Распознавание еды'}</h3>
-          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+    <>
+      {step === 'capture' && (
+        <div className="scan-zone">
+          <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : <Camera size={30} />}</div>
+          <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : 'Сфотографируйте блюдо'}</p>
+          <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : 'калории и БЖУ'} автоматически</p>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={onFile} />
+          <button className="btn primary sm" onClick={() => fileRef.current?.click()}>Выбрать фото</button>
+          <button className="btn sm" onClick={() => { setReal(false); setStep('result') }}>Посмотреть демо-пример</button>
         </div>
+      )}
 
-        {step === 'capture' && (
-          <div className="scan-zone" onClick={start}>
-            <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : <Camera size={30} />}</div>
-            <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : 'Сфотографируйте блюдо'}</p>
-            <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : 'калории и БЖУ'} автоматически</p>
-            <button className="btn primary sm">Сделать фото</button>
+      {step === 'analyzing' && (
+        <div className="scan-zone analyzing">
+          <Loader2 size={34} className="spin" />
+          <p className="scan-title">ИИ распознаёт…</p>
+          <p className="scan-hint">{isReceipt ? 'Читаю текст и определяю категории' : 'Оцениваю состав и калорийность'}</p>
+        </div>
+      )}
+
+      {step === 'error' && (
+        <div className="scan-zone">
+          <div className="scan-icon"><X size={28} /></div>
+          <p className="scan-title">Не получилось</p>
+          <p className="scan-hint">{err}</p>
+          <button className="btn primary sm" onClick={() => setStep('capture')}>Попробовать снова</button>
+        </div>
+      )}
+
+      {step === 'result' && (
+        <div className="scan-result">
+          <div className="result-head">
+            <CheckCircle2 size={20} className="ok" />
+            <span>{real ? 'Распознано' : 'Пример распознавания'}</span>
+            <span className="chip" style={{ marginLeft: 'auto' }}>{real ? 'ИИ' : 'Демо'}</span>
           </div>
-        )}
 
-        {step === 'analyzing' && (
-          <div className="scan-zone analyzing">
-            <Loader2 size={34} className="spin" />
-            <p className="scan-title">ИИ распознаёт…</p>
-            <p className="scan-hint">{isReceipt ? 'Читаю текст и определяю категории' : 'Оцениваю состав и калорийность'}</p>
-          </div>
-        )}
+          {isReceipt ? (
+            <>
+              <div className="result-store">{store}</div>
+              <div className="receipt-items">
+                {items.map((it, i) => (
+                  <div key={i} className="receipt-item"><span>{it.name}</span><b>{it.price} ₽</b></div>
+                ))}
+              </div>
+              <div className="receipt-total"><span>Итого</span><b>{recTotal} ₽</b></div>
+              <div className="result-cat"><span className="chip ai"><Sparkles size={13} /> Категория: Еда</span></div>
+            </>
+          ) : (
+            <>
+              <div className="result-store">{recFood.name}</div>
+              <div className="macro-grid">
+                <div className="macro"><span>Калории</span><b>{recFood.kcal}</b><small>ккал</small></div>
+                <div className="macro"><span>Белки</span><b>{recFood.protein}</b><small>г</small></div>
+                <div className="macro"><span>Жиры</span><b>{recFood.fat}</b><small>г</small></div>
+                <div className="macro"><span>Углеводы</span><b>{recFood.carbs}</b><small>г</small></div>
+              </div>
+            </>
+          )}
 
-        {step === 'result' && (
-          <div className="scan-result">
-            <div className="result-head">
-              <CheckCircle2 size={20} className="ok" />
-              <span>{isReceipt ? 'Пример распознавания' : 'Пример распознавания'}</span>
-              <span className="chip" style={{ marginLeft: 'auto' }}>Демо</span>
-            </div>
-
-            {isReceipt ? (
-              <>
-                <div className="result-store">Супермаркет «Пятёрочка»</div>
-                <div className="receipt-items">
-                  {RECEIPT_ITEMS.map((it, i) => (
-                    <div key={i} className="receipt-item"><span>{it.name}</span><b>{it.price} ₽</b></div>
-                  ))}
-                </div>
-                <div className="receipt-total"><span>Итого</span><b>{total} ₽</b></div>
-                <div className="result-cat"><span className="chip ai"><Sparkles size={13} /> Категория: Еда</span></div>
-                <p className="weight-note">Настоящее распознавание заработает после подключения Vision-модели в настройках.</p>
-              </>
-            ) : (
-              <>
-                <div className="result-store">{FOOD_RESULT.name}</div>
-                <div className="macro-grid">
-                  <div className="macro"><span>Калории</span><b>{FOOD_RESULT.kcal}</b><small>ккал</small></div>
-                  <div className="macro"><span>Белки</span><b>{FOOD_RESULT.protein}</b><small>г</small></div>
-                  <div className="macro"><span>Жиры</span><b>{FOOD_RESULT.fat}</b><small>г</small></div>
-                  <div className="macro"><span>Углеводы</span><b>{FOOD_RESULT.carbs}</b><small>г</small></div>
-                </div>
-                <p className="weight-note">Настоящее распознавание заработает после подключения Vision-модели в настройках.</p>
-              </>
-            )}
-
-            <button className="btn primary full" onClick={onClose}>Готово</button>
-          </div>
-        )}
-      </motion.div>
-    </motion.div>
+          {!real && <p className="weight-note">Настоящее распознавание заработает, когда подключишь Vision-модель в настройках.</p>}
+          <button className="btn primary full" onClick={onClose}>Готово</button>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -1288,11 +1542,41 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
   const [goal, setGoal] = useState('')
   const [timeframe, setTimeframe] = useState('1 месяц')
   const [done, setDone] = useState<Set<string>>(new Set())
+  const [planData, setPlanData] = useState(PLAN)
+  const [real, setReal] = useState(false)
+  const [err, setErr] = useState('')
+  const [generating, setGenerating] = useState(false)
 
-  const generate = () => {
-    if (!goal.trim()) return
+  const generate = async () => {
+    if (!goal.trim() || generating) return
     setStep('generating')
-    setTimeout(() => setStep('result'), 2000)
+    setErr('')
+    setGenerating(true)
+    try {
+      const settings = getAiSettings('text')
+      const prompts = loadPrompts()
+      const promptDef = PROMPTS.find(p => p.id === 'plan')
+      const sys = prompts.plan || (promptDef ? promptDef.text : '')
+      const res = await chatJson<{ weeks: { week: string; tasks: string[] }[] }>(settings, sys, 'Цель: ' + goal + '.\nСрок: ' + timeframe + '.\nСоставь план из 4 недель по 2-4 шага в каждой.')
+      if (res && Array.isArray(res.weeks) && res.weeks.length) {
+        setPlanData(res.weeks.slice(0, 6).map((w, i) => ({ week: w.week || 'Неделя ' + (i + 1), tasks: (w.tasks || []).slice(0, 6) })))
+        setReal(true)
+      } else {
+        throw new Error('Пустой ответ')
+      }
+      setStep('result')
+    } catch (e) {
+      if (e instanceof AiNotConfigured) {
+        setReal(false)
+        setStep('result')
+      } else {
+        setErr('ИИ не ответил: ' + (e instanceof Error ? e.message : 'ошибка') + '. Показан пример плана.')
+        setPlanData(PLAN)
+        setReal(false)
+        setStep('result')
+      }
+    }
+    setGenerating(false)
   }
 
   const toggle = (key: string) => {
@@ -1321,7 +1605,8 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
                 <button key={t} className={`chip click ${timeframe === t ? 'sel' : ''}`} onClick={() => setTimeframe(t)}>{t}</button>
               ))}
             </div>
-            <button className="btn primary full" onClick={generate} disabled={!goal.trim()}><Sparkles size={16} /> Составить план</button>
+            {err && <p className="lock-err">{err}</p>}
+            <button className="btn primary full" onClick={generate} disabled={!goal.trim() || generating}>{generating ? <><Loader2 size={16} className="spin" /> Составляю…</> : <><Sparkles size={16} /> Составить план</>}</button>
           </div>
         )}
 
@@ -1337,13 +1622,13 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
           <div className="plan-result">
             <div className="result-head">
               <CheckCircle2 size={20} className="ok" />
-              <span>Пример плана</span>
-              <span className="chip" style={{ marginLeft: 'auto' }}>Демо</span>
+              <span>{real ? 'План от ИИ' : 'Пример плана'}</span>
+              <span className="chip" style={{ marginLeft: 'auto' }}>{real ? 'ИИ' : 'Демо'}</span>
             </div>
             <div className="plan-goal">{goal}</div>
-            <div className="plan-meta"><CalendarDays size={14} /> {timeframe} · 4 этапа</div>
+            <div className="plan-meta"><CalendarDays size={14} /> {timeframe} · {planData.length} этапов</div>
             <div className="plan-weeks">
-              {PLAN.map((w, wi) => (
+              {planData.map((w, wi) => (
                 <div key={wi} className="plan-week">
                   <div className="plan-week-title">{w.week}</div>
                   {w.tasks.map((task, ti) => {
