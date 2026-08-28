@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer,
-  XAxis, YAxis, Tooltip, CartesianGrid, LineChart, Line,
+  XAxis, YAxis, Tooltip, CartesianGrid, LineChart as RLineChart, Line,
 } from 'recharts'
 import { CATEGORIES, MEALS, TYPES, HABIT_META } from './data'
 import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
@@ -990,13 +990,13 @@ function Health() {
         ) : (
           <div className="chart">
             <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={weightTrend(log)}>
+              <RLineChart data={weightTrend(log)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" vertical={false} />
                 <XAxis dataKey="d" tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
                 <YAxis domain={['dataMin - 1', 'dataMax + 1']} hide />
                 <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, color: 'var(--text)' }} />
                 <Line type="monotone" dataKey="v" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: '#6366f1' }} />
-              </LineChart>
+              </RLineChart>
             </ResponsiveContainer>
           </div>
         )}
