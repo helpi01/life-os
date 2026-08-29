@@ -7,6 +7,11 @@ export type Stats = {
   txs: number;
   savedR: number;
   level: number;
+  water: number;
+  sleepOk: number;
+  steps10k: number;
+  cleanBest: number;
+  food: number;
 };
 
 export const LEVELS: { level: number; name: string; xpFrom: number }[] = [
@@ -55,7 +60,7 @@ export function levelFor(xp: number): {
 }
 
 export const XPS: Record<
-  'taskDone' | 'habitDone' | 'workoutAdded' | 'foodLogged' | 'questCreated' | 'txAdded' | 'smokeSaved' | 'smokeBad' | 'cleanDay',
+  'taskDone' | 'habitDone' | 'workoutAdded' | 'foodLogged' | 'questCreated' | 'txAdded' | 'smokeSaved' | 'smokeBad' | 'cleanDay' | 'water' | 'sleepOk' | 'stepsDay' | 'mood',
   number
 > = {
   taskDone: 15,
@@ -67,12 +72,16 @@ export const XPS: Record<
   smokeSaved: 2,
   smokeBad: 3,
   cleanDay: 20,
+  water: 1,
+  sleepOk: 15,
+  stepsDay: 5,
+  mood: 2,
 };
 
 export type AchievementDef = {
   id: string;
   name: string;
-  icon: 'flame' | 'wallet' | 'calendar' | 'activity' | 'dumbbell' | 'book' | 'crown' | 'star';
+  icon: 'flame' | 'wallet' | 'calendar' | 'activity' | 'dumbbell' | 'book' | 'crown' | 'star' | 'droplets' | 'bed' | 'footprints' | 'shield' | 'utensils';
   hint: string;
   test: (stats: Stats) => boolean;
 };
@@ -133,5 +142,40 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     icon: 'star',
     hint: 'Набери 1000 XP',
     test: (stats) => stats.level >= 6,
+  },
+  {
+    id: 'water-50',
+    name: '50 стаканов воды',
+    icon: 'droplets',
+    hint: 'Выпей 50 стаканов воды (12,5 л) за всё время',
+    test: (stats) => stats.water >= 50,
+  },
+  {
+    id: 'sleep-ok',
+    name: 'Сон в норме',
+    icon: 'bed',
+    hint: 'Выспись 7 дней (7+ часов сна)',
+    test: (stats) => stats.sleepOk >= 7,
+  },
+  {
+    id: 'steps-10k',
+    name: '10 000 шагов',
+    icon: 'footprints',
+    hint: 'Пройди 10 000 шагов за один день',
+    test: (stats) => stats.steps10k >= 1,
+  },
+  {
+    id: 'clean-7',
+    name: 'Неделя без срывов',
+    icon: 'shield',
+    hint: '7 дней подряд без вредных привычек',
+    test: (stats) => stats.cleanBest >= 7,
+  },
+  {
+    id: 'food-30',
+    name: '30 записей еды',
+    icon: 'utensils',
+    hint: 'Запиши еду 30 раз',
+    test: (stats) => stats.food >= 30,
   },
 ];

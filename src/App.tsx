@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Wallet, Dumbbell, Repeat, HeartPulse, Utensils, Sparkles,
   Sun, Moon, Plus, X, TrendingUp, Flame,
   Droplet, BookOpen, Ban, Activity, ArrowUpRight, ArrowDownRight, Brain,
+  Droplets, BedDouble, Footprints, Shield, ChevronLeft, ChevronRight, Pencil,
   Camera, ScanLine, Loader2, CheckCircle2, ImagePlus, ListTodo, Target, CalendarDays,
   Settings, Crown, Flag, KeyRound, Eye, EyeOff, Check,
   MessageSquare, LineChart, Landmark, Coins, RefreshCw, Trash2,
@@ -54,6 +55,13 @@ const diffDays = (iso: string) => {
   const d = new Date(iso + 'T00:00:00')
   const n = new Date(); n.setHours(0, 0, 0, 0)
   return Math.round((n.getTime() - d.getTime()) / 86400000)
+}
+
+// Часы сна из десятичных часов: 23.5 → 7.5 = 8.0 ч (переход через полночь учтён)
+const sleepHours = (bed: number, woke: number) => {
+  let mins = woke * 60 - bed * 60
+  if (mins < 0) mins += 24 * 60
+  return Math.round((mins / 60) * 10) / 10
 }
 const fmtDate = (iso: string) => {
   const d = new Date(iso + 'T00:00:00')
@@ -179,7 +187,9 @@ const INSIGHTS = [
   'Подключи ИИ в настройках — тогда он начнёт анализировать расходы, питание и тренировки.',
 ]
 
-const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: CalendarDays, activity: Activity, dumbbell: Dumbbell, book: BookOpen, crown: Crown, star: Star }
+const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: CalendarDays, activity: Activity, dumbbell: Dumbbell, book: BookOpen, crown: Crown, star: Star, droplets: Droplets, bed: BedDouble, footprints: Footprints, shield: Shield, utensils: Utensils }
+
+type SleepEntry = { id: number; date: string; bed: number; woke: number }
 
 function Dashboard() {
   const [txs] = useArtifactState('lifeos_tx', [] as Tx[])
@@ -190,6 +200,11 @@ function Dashboard() {
   const [tasks] = useArtifactState('lifeos_tasks', [] as Task[])
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
   const [addQ, setAddQ] = useState(false)
+  const [wtr, setWtr] = useArtifactState('lifeos_water', { d: '', ml: 0 })
+  const [stepsT, setStepsT] = useArtifactState('lifeos_steps_today', { d: '', v: 0 })
+  const [stepsGoal] = useArtifactState('lifeos_steps_goal', 10000)
+  const [sleepLog] = useArtifactState('lifeos_sleep', [] as SleepEntry[])
+  const [moodMark] = useArtifactState('lifeos_mood', {} as Record<string, number>)
 
   const today = todayISO()
   const todaySpent = txs.filter(t => t.amount < 0 && t.date === today).reduce((s, t) => s - t.amount, 0)
@@ -202,6 +217,7 @@ function Dashboard() {
   }))
 
   const lv = levelFor(xp)
+  const counters = (() => { try { return JSON.parse(localStorage.getItem('lifeos_counters') || '{}') as any } catch { return {} } })()
   const stats: Stats = {
     tasksDone: tasks.filter(t => t.done).length,
     habitsDone: doneHabits,
@@ -211,7 +227,13 @@ function Dashboard() {
     txs: txs.length,
     savedR: txs.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0),
     level: lv.level,
+    water: Number(counters.water || 0),
+    sleepOk: Number(counters.sleepOk || 0),
+    steps10k: Number(counters.steps10k || 0),
+    cleanBest: Object.values(JSON.parse(localStorage.getItem('lifeos:bad_streaks') || '{}')).reduce((m: number, v: any) => Math.max(m, Number(v) || 0), 0),
+    food: food.length,
   }
+  const sleepToday = sleepLog.find(s => s.date === today)
   const unlocked = ACHIEVEMENTS.filter(a => a.test(stats)).map(a => a.id)
 
   const addQuest = (v: Record<string, string>) => {
@@ -264,6 +286,19 @@ function Dashboard() {
         <StatCard icon={Flame} label="Калории сегодня" value={fmt(todayKcal)} sub="ккал" tone="orange" />
         <StatCard icon={Dumbbell} label="Тренировок на неделе" value={String(weekWorkouts.length)} sub={weekWorkouts.reduce((s, w) => s + w.durMin, 0) + ' мин за неделю'} tone="green" />
         <StatCard icon={Repeat} label="Привычек сделано" value={`${doneHabits} из ${habits.length}`} sub={habits.length ? 'сегодня' : 'добавь привычки'} tone="blue" />
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h3>Итог дня</h3><span className="chip">сегодня</span></div>
+        <div className="day-summary">
+          <div className="day-sum-item"><Repeat size={16} /> Привычки: <b>{doneHabits} из {habits.length}</b></div>
+          <div className="day-sum-item"><Utensils size={16} /> Калории: <b>{fmt(todayKcal)} ккал</b></div>
+          <div className="day-sum-item"><Droplet size={16} /> Вода: <b>{wtr.d === today ? wtr.ml : 0} мл</b></div>
+          <div className="day-sum-item"><Footprints size={16} /> Шаги: <b>{stepsT.d === today ? fmt(stepsT.v) : 0}</b> / {fmt(stepsGoal)}</div>
+          <div className="day-sum-item"><Dumbbell size={16} /> Тренировки: <b>{workouts.filter(w => w.date === today).length}</b></div>
+          <div className="day-sum-item"><CheckCircle2 size={16} /> Сон: <b>{sleepToday ? sleepHours(sleepToday.bed, sleepToday.woke) + ' ч' : '—'}</b></div>
+          <div className="day-sum-item"><Sparkles size={16} /> Настроение: <b>{moodMark[today] ? ['😐', '🙂', '😄', '😊', '😌'][moodMark[today] - 1] : '—'}</b></div>
+        </div>
       </div>
 
       <div className="grid-2">
@@ -722,11 +757,13 @@ function Sport() {
   const [workouts, setWorkouts] = useArtifactState('lifeos_workouts', [] as Workout[])
   const [adding, setAdding] = useState(false)
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
+  const [day, setDay] = useState(todayISO())
+  const [editW, setEditW] = useState<Workout | null>(null)
 
   const week = workouts.filter(w => diffDays(w.date) < 7)
   const weekKcal = week.reduce((s, w) => s + w.kcal, 0)
   const weekMin = week.reduce((s, w) => s + w.durMin, 0)
-
+  const dayWorkouts = workouts.filter(w => w.date === day)
   const addWorkout = (v: Record<string, string>) => {
     setWorkouts(w => [{ id: Date.now(), name: v.name, date: todayISO(), durMin: Number(v.durMin), kcal: Number(v.kcal) }, ...w])
     setXp(x => x + XPS.workoutAdded)
@@ -744,15 +781,24 @@ function Sport() {
       </div>
       <div className="card">
         <div className="card-head"><h3>Тренировки</h3><button className="btn primary sm" onClick={() => setAdding(true)}>+ Тренировка</button></div>
+        <div className="day-nav">
+          <button className="icon-btn" onClick={() => setDay(daysAgoISO(diffDays(day) + 1))}><ChevronLeft size={18} /></button>
+          <span className="chip">{day === todayISO() ? 'Сегодня' : fmtDate(day)} · {dayWorkouts.length}</span>
+          <button className="icon-btn" onClick={() => setDay(daysAgoISO(Math.max(0, diffDays(day) - 1)))}><ChevronRight size={18} /></button>
+        </div>
         {workouts.length === 0 ? (
           <Empty text="Добавь первую тренировку — силовую, бег, йогу или плавание" action={<button className="btn primary sm" onClick={() => setAdding(true)}>+ Тренировка</button>} />
         ) : (
           <div className="workout-list">
-            {workouts.map(w => (
+            {dayWorkouts.map(w => (
               <div key={w.id} className="workout">
                 <div className="workout-icon"><Dumbbell size={18} /></div>
                 <div className="workout-body"><span className="tx-name">{w.name}</span><span className="tx-cat">{fmtDate(w.date)}</span></div>
                 <div className="workout-meta"><span>{w.durMin} мин</span><span className="kcal">{w.kcal} ккал</span></div>
+                <span className="row-acts">
+                  <button className="icon-btn" onClick={() => setEditW(w)} title="Изменить"><Pencil size={14} /></button>
+                  <button className="icon-btn row-del" onClick={() => setWorkouts(ws => ws.filter(x => x.id !== w.id))} title="Удалить"><Trash2 size={14} /></button>
+                </span>
               </div>
             ))}
           </div>
@@ -770,6 +816,23 @@ function Sport() {
           submitLabel="Добавить"
           onSubmit={addWorkout}
           onClose={() => setAdding(false)}
+        />
+      )}
+      {editW && (
+        <EntryModal
+          title="Изменить тренировку"
+          fields={[
+            { key: 'name', label: 'Что делал?', placeholder: 'Силовая · Грудь и спина' },
+            { key: 'durMin', label: 'Длительность, мин', type: 'number', placeholder: '45' },
+            { key: 'kcal', label: 'Калории (примерно)', type: 'number', placeholder: '350' },
+          ]}
+          initial={{ name: editW.name, durMin: String(editW.durMin), kcal: String(editW.kcal) }}
+          submitLabel="Сохранить"
+          onSubmit={(v) => {
+            setWorkouts(ws => ws.map(x => x.id === editW.id ? { ...x, name: v.name, durMin: Number(v.durMin), kcal: Number(v.kcal) } : x))
+            setEditW(null)
+          }}
+          onClose={() => setEditW(null)}
         />
       )}
     </div>
@@ -977,6 +1040,7 @@ function Plans({ onPlan }: any) {
                 <div className={`task-check ${t.done ? 'on' : ''}`} onClick={() => toggle(t.id)}>{t.done && <CheckCircle2 size={16} />}</div>
                 <div className="task-body"><span className="tx-name">{t.name}</span></div>
                 <span className={`prio prio-${t.prio}`} />
+                <button className="icon-btn row-del" onClick={() => setTasks(ts => ts.filter(x => x.id !== t.id))} title="Удалить"><Trash2 size={14} /></button>
               </div>
             ))}
           </div>
@@ -1006,6 +1070,18 @@ function Health() {
   const [input, setInput] = useState('')
   const [saved, setSaved] = useState(false)
   const [height, setHeight] = useArtifactState('health_height', '')
+  const [wtr, setWtr] = useArtifactState('lifeos_water', { d: '', ml: 0 })
+  const [wGoal, setWGoal] = useArtifactState('lifeos_water_goal', '2000')
+  const [stepsT, setStepsT] = useArtifactState('lifeos_steps_today', { d: '', v: 0 })
+  const [stepsGoal, setStepsGoal] = useArtifactState('lifeos_steps_goal', 10000)
+  const [stepsInput, setStepsInput] = useState('')
+  const [sleepLog, setSleepLog] = useArtifactState('lifeos_sleep', [] as SleepEntry[])
+  const [moodMark, setMoodMark] = useArtifactState('lifeos_mood', {} as Record<string, number>)
+  const [moodNotes, setMoodNotes] = useArtifactState('lifeos_mood_note', {} as Record<string, string>)
+  const [sleepBed, setSleepBed] = useState('23')
+  const [sleepWoke, setSleepWoke] = useState('7')
+  const [moodNote, setMoodNote] = useState('')
+  const [moodNoteSave, setMoodNoteSave] = useState(false)
 
   const current = log.length ? log[0].value : null
   const change = log.length > 1 ? Math.round((log[0].value - log[log.length - 1].value) * 10) / 10 : null
@@ -1020,6 +1096,60 @@ function Health() {
     setTimeout(() => setSaved(false), 1800)
   }
 
+  // ---- Трекеры: шаги, вода, сон ----
+  const counters = () => { try { return JSON.parse(localStorage.getItem('lifeos_counters') || '{}') as any } catch { return {} } }
+  const bumpCounter = (key: string, by = 1) => {
+    const c = counters(); c[key] = (Number(c[key]) || 0) + by
+    localStorage.setItem('lifeos_counters', JSON.stringify(c))
+  }
+  const addWater = (n: number) => {
+    setWtr(w => {
+      const fresh = w.d === todayISO() ? w : { d: todayISO(), ml: 0 }
+      return { d: fresh.d, ml: fresh.ml + n }
+    })
+    bumpCounter('water', Math.round(n / 250) || 1)
+    setXp(x => x + XPS.water)
+  }
+  const addSteps = (n: number) => {
+    setStepsT(s => {
+      const fresh = s.d === todayISO() ? s : { d: todayISO(), v: 0 }
+      const nw = { d: fresh.d, v: fresh.v + n }
+      if (nw.v >= stepsGoal && fresh.v < stepsGoal) {
+        bumpCounter('steps10k')
+        setXp(x => x + XPS.stepsDay)
+      }
+      return nw
+    })
+  }
+  const saveSleep = () => {
+    const bed = Number(sleepBed.replace(',', '.'))
+    const woke = Number(sleepWoke.replace(',', '.'))
+    if (!isFinite(bed) || !isFinite(woke) || bed < 0 || bed > 24 || woke < 0 || woke > 24) return
+    const hours = sleepHours(bed, woke)
+    setSleepLog(l => {
+      const already = l.some(x => x.date === todayISO())
+      if (hours >= 7 && !already) {
+        bumpCounter('sleepOk')
+        setXp(x => x + XPS.sleepOk)
+      }
+      return [{ id: Date.now(), date: todayISO(), bed, woke }, ...l.filter(x => x.date !== todayISO())]
+    })
+  }
+  const removeSleep = (id: number) => setSleepLog(l => l.filter(x => x.id !== id))
+  const saveMood = (v: number) => {
+    if (!moodMark[todayISO()]) setXp(x => x + XPS.mood)
+    setMoodMark(m => ({ ...m, [todayISO()]: v }))
+    setMoodNote(moodNotes[todayISO()] || '')
+  }
+  const saveMoodNote = () => {
+    if (moodNote.trim()) setMoodNotes(n => ({ ...n, [todayISO()]: moodNote.trim() }))
+    setMoodNoteSave(true)
+    setTimeout(() => setMoodNoteSave(false), 1500)
+  }
+  const removeMood = () => {
+    setMoodMark(m => { const n = { ...m }; delete n[todayISO()]; return n })
+    setMoodNotes(n => { const nn = { ...n }; delete nn[todayISO()]; return nn })
+  }
   return (
     <div className="view">
       <h1>Здоровье</h1>
@@ -1069,6 +1199,7 @@ function Health() {
                 <div className="tx-icon" style={{ background: '#6366f122', color: '#6366f1' }}><Activity size={16} /></div>
                 <div className="tx-body"><span className="tx-name">{fmtDate(w.date)}</span><span className="tx-cat">замер веса</span></div>
                 <span className="tx-amount">{w.value} кг</span>
+                <button className="icon-btn row-del" onClick={() => setLog(l => l.filter(x => x.id !== w.id))}><Trash2 size={14} /></button>
               </div>
             ))}
           </div>
@@ -1095,10 +1226,105 @@ function Health() {
       </div>
 
       <div className="card">
-        <div className="card-head"><h3>Настроение</h3></div>
+        <div className="card-head"><h3>Шаги</h3><span className="chip">{stepsT.d === todayISO() ? fmt(stepsT.v) : 0} шагов</span></div>
+        <div className="weight-row">
+          <div className="weight-input-wrap">
+            <input type="number" inputMode="numeric" className="weight-input" value={stepsInput} onChange={e => setStepsInput(e.target.value)} placeholder={String(stepsGoal)} />
+            <span className="weight-unit">шагов за день</span>
+          </div>
+          <button className="btn primary sm" onClick={() => {
+            const n = Math.max(0, Math.round(Number(stepsInput.replace(',', '.')) || 0))
+            if (n) {
+              addSteps(n - (stepsT.d === todayISO() ? stepsT.v : 0))
+              setStepsInput('')
+            }
+          }}>Ввести</button>
+        </div>
+        <div className="eat-chips">
+          <button className="chip click" onClick={() => addSteps(1000)}>+1000</button>
+          <button className="chip click" onClick={() => addSteps(2000)}>+2000</button>
+          <button className="chip click" onClick={() => addSteps(5000)}>+5000</button>
+        </div>
+        <label className="field-label">Цель: {stepsGoal} шагов</label>
+        <div className={`budget-bar`}><div className={`budget-fill ${(stepsT.d === todayISO() ? stepsT.v : 0) >= stepsGoal ? 'over' : ''}`} style={{ width: Math.min(100, ((stepsT.d === todayISO() ? stepsT.v : 0) / stepsGoal) * 100) + '%' }} /></div>
+        <span className="tx-cat">10 000 шагов в день = достижение и +{XPS.stepsDay} XP</span>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h3>Вода</h3><span className="chip">{wtr.d === todayISO() ? wtr.ml : 0} мл</span></div>
+        <div className="weight-row">
+          <div className="weight-input-wrap">
+            <input type="number" inputMode="numeric" className="weight-input" value={wGoal} onChange={e => setWGoal(e.target.value)} placeholder="2000" />
+            <span className="weight-unit">норма, мл</span>
+          </div>
+        </div>
+        <div className="eat-chips">
+          <button className="chip click" onClick={() => addWater(250)}>+250 мл</button>
+          <button className="chip click" onClick={() => addWater(500)}>+500 мл</button>
+          <button className="chip click" onClick={() => addWater(1000)}>+1000 мл</button>
+        </div>
+        <div className="budget-bar"><div className={`budget-fill ${(wtr.d === todayISO() ? wtr.ml : 0) > Number(wGoal || 2000) ? 'over' : ''}`} style={{ width: Math.min(100, ((wtr.d === todayISO() ? wtr.ml : 0) / Number(wGoal || 2000)) * 100) + '%' }} /></div>
+        <span className="tx-cat">+{XPS.water} XP за каждый стакан · сегодня {Math.round((wtr.d === todayISO() ? wtr.ml : 0) / 250)} стаканов</span>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h3>Сон</h3><span className="chip">норма 7+ ч</span></div>
+        <div className="weight-row">
+          <div className="weight-input-wrap">
+            <input type="number" step="0.5" inputMode="decimal" className="weight-input" value={sleepBed} onChange={e => setSleepBed(e.target.value)} placeholder="23" />
+            <span className="weight-unit">лёг, ч</span>
+          </div>
+          <div className="weight-input-wrap">
+            <input type="number" step="0.5" inputMode="decimal" className="weight-input" value={sleepWoke} onChange={e => setSleepWoke(e.target.value)} placeholder="7" />
+            <span className="weight-unit">встал, ч</span>
+          </div>
+          <button className="btn primary sm" onClick={saveSleep}><Check size={15} /> Записать</button>
+        </div>
+        <span className="tx-cat">Пример: лёг в 23.5, встал в 7.5 → 8 часов (+{XPS.sleepOk} XP за 7+ ч)</span>
+        {sleepLog.length > 0 && (
+          <div className="tx-list">
+            {sleepLog.slice(0, 7).map(s => (
+              <div key={s.id} className="tx">
+                <div className="tx-icon" style={{ background: '#8b5cf622', color: '#8b5cf6' }}><BedDouble size={16} /></div>
+                <div className="tx-body"><span className="tx-name">{fmtDate(s.date)}</span><span className="tx-cat">лёг {s.bed}, встал {s.woke}</span></div>
+                <span className={`tx-amount ${sleepHours(s.bed, s.woke) >= 7 ? '' : 'over-txt'}`}>{sleepHours(s.bed, s.woke)} ч</span>
+                <button className="icon-btn row-del" onClick={() => removeSleep(s.id)}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h3>Настроение</h3><span className="chip">за сегодня</span></div>
         <div className="mood-row">
-          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d, i) => (
-            <div key={d} className="mood"><span className="mood-emoji">{['😐', '🙂', '😄', '🙂', '😊', '😄', '😌'][i]}</span><span>{d}</span></div>
+          {[['😫', 1], ['😕', 2], ['😐', 3], ['🙂', 4], ['😄', 5]].map(([e, v]) => (
+            <div key={v} className={`mood ${moodMark[todayISO()] === v ? 'sel' : ''}`} onClick={() => saveMood(v as number)}>
+              <span className="mood-emoji">{e}</span><span>{v}</span>
+            </div>
+          ))}
+        </div>
+        {moodMark[todayISO()] ? (
+          <>
+            <div className="weight-row">
+              <div className="weight-input-wrap">
+                <input className="text-input" value={moodNote} onChange={e => setMoodNote(e.target.value)} placeholder="Заметка о дне (необязательно)" />
+              </div>
+              <button className="btn sm" onClick={saveMoodNote}>{moodNoteSave ? '✓' : 'Сохранить'}</button>
+              <button className="icon-btn" onClick={removeMood} title="Сбросить настроение"><X size={16} /></button>
+            </div>
+            {moodNotes[todayISO()] && <p className="weight-note">📝 {moodNotes[todayISO()]}</p>}
+          </>
+        ) : (
+          <span className="tx-cat">Отметь, как себя чувствуешь сегодня (+{XPS.mood} XP)</span>
+        )}
+        <label className="field-label">Настроение за 2 недели</label>
+        <div className="mood-row">
+          {lastDays(14).map(d => (
+            <div key={d.iso} className="mood" title={d.label}>
+              <span className="mood-emoji">{moodMark[d.iso] ? ['😫', '😕', '😐', '🙂', '😄'][moodMark[d.iso] - 1] : '·'}</span>
+              <span>{d.label.slice(0, 2)}</span>
+            </div>
           ))}
         </div>
       </div>
@@ -1112,6 +1338,8 @@ function Food({ onScan }: any) {
   const [calGoal, setCalGoal] = useArtifactState('food_cal_goal', '')
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
+  const [day, setDay] = useState(todayISO())
+  const [editFood, setEditFood] = useState<FoodEntry | null>(null)
   // Сканер добавляет записи через событие — подхватываем их в дневник
   useEffect(() => {
     const h = () => { try { setFood(JSON.parse(localStorage.getItem('lifeos:food') || '[]')) } catch { /* ignore */ } }
@@ -1123,6 +1351,8 @@ function Food({ onScan }: any) {
   const today = todayISO()
   const todayFood = food.filter(f => f.date === today)
   const todayKcal = todayFood.reduce((s, f) => s + f.kcal, 0)
+  const dayFood = food.filter(f => f.date === day)
+  const dayKcal = dayFood.reduce((s, f) => s + f.kcal, 0)
 
   const addFood = (v: Record<string, string>) => {
     setFood(f => [{ id: Date.now(), name: v.name, meal: v.meal, kcal: Number(v.kcal), date: today }, ...f])
@@ -1135,7 +1365,7 @@ function Food({ onScan }: any) {
       <h1>Питание</h1>
       <p className="sub">Еда и калории</p>
       <div className="grid-3">
-        <StatCard icon={Flame} label="Калории сегодня" value={fmt(todayKcal)} sub="ккал" tone="orange" />
+        <StatCard icon={Flame} label={`Калории ${day === today ? 'сегодня' : fmtDate(day)}`} value={fmt(dayKcal)} sub="ккал за день" tone="orange" />
         <StatCard icon={Utensils} label="Приёмов пищи" value={String(todayFood.length)} sub="сегодня" tone="green" />
         <StatCard icon={BookOpen} label="Записей всего" value={String(food.length)} sub="дневник питания" tone="blue" />
       </div>
@@ -1165,15 +1395,24 @@ function Food({ onScan }: any) {
             <button className="btn primary sm" onClick={() => setAdding(true)}>+ Запись</button>
           </div>
         </div>
-        {food.length === 0 ? (
-          <Empty text="Добавь, что сегодня съел, — или сфотографируй блюдо: ИИ посчитает калории" action={<button className="btn primary sm" onClick={() => setAdding(true)}>+ Запись</button>} />
+        <div className="day-nav">
+          <button className="icon-btn" onClick={() => setDay(daysAgoISO(diffDays(day) + 1))}><ChevronLeft size={18} /></button>
+          <span className="chip">{day === today ? 'Сегодня' : fmtDate(day)}</span>
+          <button className="icon-btn" onClick={() => setDay(daysAgoISO(Math.max(0, diffDays(day) - 1)))}><ChevronRight size={18} /></button>
+        </div>
+        {dayFood.length === 0 ? (
+          <Empty text={food.length === 0 ? 'Добавь, что сегодня съел, — или сфотографируй блюдо: ИИ посчитает калории' : 'В этот день записей нет — листай стрелками или вернись к «Сегодня»'} action={<button className="btn primary sm" onClick={() => setAdding(true)}>+ Запись</button>} />
         ) : (
           <div className="tx-list">
-            {food.map(f => (
+            {dayFood.map(f => (
               <div key={f.id} className="tx">
                 <div className="tx-icon" style={{ background: '#10b98122', color: '#10b981' }}><Utensils size={16} /></div>
                 <div className="tx-body"><span className="tx-name">{f.name}</span><span className="tx-cat">{f.meal} · {fmtDate(f.date)}</span></div>
                 <span className="tx-amount">{f.kcal} ккал</span>
+                <span className="row-acts">
+                  <button className="icon-btn" onClick={() => setEditFood(f)} title="Изменить"><Pencil size={14} /></button>
+                  <button className="icon-btn row-del" onClick={() => setFood(fs => fs.filter(x => x.id !== f.id))} title="Удалить"><Trash2 size={14} /></button>
+                </span>
               </div>
             ))}
           </div>
@@ -1191,6 +1430,23 @@ function Food({ onScan }: any) {
           submitLabel="Добавить"
           onSubmit={addFood}
           onClose={() => setAdding(false)}
+        />
+      )}
+      {editFood && (
+        <EntryModal
+          title="Изменить запись"
+          fields={[
+            { key: 'name', label: 'Что съел?', placeholder: 'Овсянка с ягодами' },
+            { key: 'meal', label: 'Приём пищи', type: 'select', options: MEALS.map(m => ({ value: m, label: m })) },
+            { key: 'kcal', label: 'Калории', type: 'number', placeholder: '320' },
+          ]}
+          initial={{ name: editFood.name, meal: editFood.meal, kcal: String(editFood.kcal) }}
+          submitLabel="Сохранить"
+          onSubmit={(v) => {
+            setFood(fs => fs.map(x => x.id === editFood.id ? { ...x, name: v.name, meal: v.meal, kcal: Number(v.kcal) } : x))
+            setEditFood(null)
+          }}
+          onClose={() => setEditFood(null)}
         />
       )}
     </div>
