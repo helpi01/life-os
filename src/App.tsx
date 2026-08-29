@@ -1221,7 +1221,7 @@ function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvide
         </>
       )}
 
-      <label className="field-label">API-ключ</label>
+      <label className="field-label">API-ключ — общий: достаточно вписать в одну из карточек</label>
       <div className="key-input">
         <input type={showKey ? 'text' : 'password'} value={keyVal} onChange={e => setKeyVal(e.target.value)} placeholder="Вставь API-ключ…" />
         <button className="icon-btn" onClick={() => setShowKey(s => !s)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>

@@ -28,7 +28,7 @@ export function getAiSettings(kind: 'vision' | 'text'): AiSettings {
   } catch {
     keys = {}
   }
-  const apiKey = kind === 'vision' ? keys.vision : keys.text
+  const apiKey = (kind === 'vision' ? keys.vision : keys.text) || (kind === 'vision' ? keys.text : keys.vision) || ''
 
   let baseUrl: string
   if (provider === 'custom') {
