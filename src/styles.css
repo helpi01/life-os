@@ -435,6 +435,20 @@ body { font-family: var(--font); }
 .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .model-chips .chip { max-width: 100%; }
 
+/* Вредные привычки */
+.bad-list { display: flex; flex-direction: column; gap: 14px; }
+.bad-row { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: var(--surface-2); }
+.bad-row.over { border-color: #f43f5e55; }
+.bad-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; gap: 8px; }
+.bad-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.bad-actions .btn { max-width: 100%; }
+.bad-days { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.bad-day {
+  min-width: 28px; height: 28px; padding: 0 6px; border-radius: 8px; font-size: 12px; font-weight: 700;
+  display: grid; place-items: center; color: #0f766e; background: #10b98122;
+}
+.bad-day.bad { color: #e11d48; background: #f43f5e22; }
+
 /* ---- Мобильная адаптация: поля, полосы, шторки ---- */
 html, body { overflow-x: hidden; }
 .app { min-width: 0; }

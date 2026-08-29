@@ -55,7 +55,7 @@ export function levelFor(xp: number): {
 }
 
 export const XPS: Record<
-  'taskDone' | 'habitDone' | 'workoutAdded' | 'foodLogged' | 'questCreated' | 'txAdded',
+  'taskDone' | 'habitDone' | 'workoutAdded' | 'foodLogged' | 'questCreated' | 'txAdded' | 'smokeSaved' | 'smokeBad' | 'cleanDay',
   number
 > = {
   taskDone: 15,
@@ -64,6 +64,9 @@ export const XPS: Record<
   foodLogged: 5,
   questCreated: 20,
   txAdded: 2,
+  smokeSaved: 2,
+  smokeBad: 3,
+  cleanDay: 20,
 };
 
 export type AchievementDef = {

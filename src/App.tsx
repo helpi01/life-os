@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useArtifactState } from './dsh-sdk-shim'
 import {
@@ -18,6 +18,8 @@ import { CATEGORIES, MEALS, TYPES, HABIT_META } from './data'
 import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
 import { levelFor, XPS, ACHIEVEMENTS } from './gamification'
 import type { Stats } from './gamification'
+import { addCount, countOn, last7Dates, dayLabel, daysAgoISO, BAD_XP } from './badHabits'
+import type { BadHabit, BadLog } from './badHabits'
 import { categorySpends } from './budgets'
 import type { Budgets } from './budgets'
 import { downloadBackup, parseBackupFile, applyBackup, bmi, weightTrend, calorieProgress } from './dataUtils'
@@ -778,6 +780,11 @@ function Habits() {
   const [habits, setHabits] = useArtifactState('lifeos_habits', [] as Habit[])
   const [adding, setAdding] = useState(false)
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
+  const [badHabits, setBadHabits] = useArtifactState('lifeos_bad_habits', [] as BadHabit[])
+  const [badLogs, setBadLogs] = useArtifactState('lifeos_bad_logs', [] as BadLog[])
+  const [badStreaks, setBadStreaks] = useArtifactState('lifeos_bad_streaks', {} as Record<string, number>)
+  const [badChecked, setBadChecked] = useArtifactState('lifeos_bad_checked', '')
+  const [badAdd, setBadAdd] = useState(false)
 
   const done = habits.filter(h => h.done).length
   const bestStreak = habits.reduce((m, h) => Math.max(m, h.streak), 0)
@@ -791,6 +798,42 @@ function Habits() {
     if (h && !h.done) setXp(x => x + XPS.habitDone)
     setHabits(hs => hs.map(x => x.id === id ? { ...x, done: !x.done, streak: x.done ? x.streak : x.streak + 1 } : x))
   }
+
+  const addBad = (v: Record<string, string>) => {
+    setBadHabits(h => [...h, { id: Date.now(), name: v.name, limit: Math.max(0, Number(v.limit) || 0) }])
+    setBadAdd(false)
+  }
+  const removeBad = (id: number) => setBadHabits(h => h.filter(x => x.id !== id))
+  const logBad = (id: number, delta: number) => {
+    setBadLogs(l => addCount(l, id, todayISO(), delta))
+    if (delta > 0) {
+      const h = badHabits.find(x => x.id === id)
+      const alreadyOver = countOn(badLogs, id, todayISO()) >= (h ? h.limit : 0)
+      setXp(x => x - BAD_XP.smoke - (alreadyOver ? 2 : 0))
+    } else {
+      setXp(x => x + BAD_XP.saved)
+    }
+  }
+
+  // Бонус «чистый день»: при открытии начисляем за вчера, если срывов не было
+  useEffect(() => {
+    if (badChecked === todayISO()) return
+    const y = daysAgoISO(1)
+    let bonus = 0
+    setBadStreaks(s => {
+      const n = { ...s }
+      badHabits.forEach(h => {
+        const ok = countOn(badLogs, h.id, y) <= h.limit
+        const cur = n[String(h.id)] || 0
+        n[String(h.id)] = ok ? cur + 1 : 0
+        if (ok) bonus += BAD_XP.cleanDay
+      })
+      return n
+    })
+    if (bonus) setXp(x => x + bonus)
+    setBadChecked(todayISO())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [badChecked])
 
   return (
     <div className="view">
@@ -821,6 +864,43 @@ function Habits() {
         )}
       </div>
 
+      <div className="card">
+        <div className="card-head"><h3>Вредные привычки</h3><span className="chip">штраф за срыв</span></div>
+        {badHabits.length === 0 ? (
+          <Empty text="Добавь привычку, от которой хочешь отказаться: сигареты, стики, сладкое…" action={<button className="btn primary sm" onClick={() => setBadAdd(true)}>+ Привычка</button>} />
+        ) : (
+          <div className="bad-list">
+            {badHabits.map(h => {
+              const today = countOn(badLogs, h.id, todayISO())
+              const over = today > h.limit
+              const st = badStreaks[String(h.id)] || 0
+              const days = last7Dates()
+              return (
+                <div key={h.id} className={`bad-row ${over ? 'over' : ''}`}>
+                  <div className="bad-head">
+                    <span className="tx-name">{h.name}</span>
+                    <span className="tx-cat">{today} сегодня · стрик {st} дн. · лимит {h.limit}/день</span>
+                  </div>
+                  <div className="budget-bar"><div className={`budget-fill ${over ? 'over' : ''}`} style={{ width: Math.min(100, h.limit > 0 ? (today / h.limit) * 100 : (today > 0 ? 100 : 0)) + '%' }} /></div>
+                  <div className="bad-actions">
+                    <button className="btn sm" onClick={() => logBad(h.id, -1)}>Не выкурил +{BAD_XP.saved} XP</button>
+                    <button className="btn danger sm" onClick={() => logBad(h.id, +1)}>Выкурил −{BAD_XP.smoke} XP</button>
+                    <button className="icon-btn" onClick={() => removeBad(h.id)}><Trash2 size={14} /></button>
+                  </div>
+                  <div className="bad-days">
+                    {days.map(d => {
+                      const c = countOn(badLogs, h.id, d)
+                      return <span key={d} className={`bad-day ${c > h.limit ? 'bad' : 'ok'}`} title={dayLabel(d)}>{c}</span>
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <button className="btn sm" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => setBadAdd(true)}>+ Добавить привычку</button>
+      </div>
+
       {adding && (
         <EntryModal
           title="Новая привычка"
@@ -831,6 +911,18 @@ function Habits() {
           submitLabel="Добавить"
           onSubmit={addHabit}
           onClose={() => setAdding(false)}
+        />
+      )}
+      {badAdd && (
+        <EntryModal
+          title="Вредная привычка"
+          fields={[
+            { key: 'name', label: 'Название', placeholder: 'Стики для вейпа' },
+            { key: 'limit', label: 'Лимит в день (0 = полный отказ)', type: 'number', placeholder: '0' },
+          ]}
+          submitLabel="Добавить"
+          onSubmit={addBad}
+          onClose={() => setBadAdd(false)}
         />
       )}
     </div>
