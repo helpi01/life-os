@@ -1588,6 +1588,7 @@ function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: 
     <>
       {step === 'capture' && (
         <div className="scan-zone">
+          <button className="icon-btn scan-close" onClick={onClose} aria-label="Закрыть"><X size={18} /></button>
           <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : <Camera size={30} />}</div>
           <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : 'Сфотографируйте блюдо'}</p>
           <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : 'калории и БЖУ'} автоматически</p>

@@ -435,6 +435,15 @@ body { font-family: var(--font); }
 .eat-block { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
 .eat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 
+/* Сканер: плотный фон вместо «прозрачной» дыры и кнопка закрытия */
+.scan-zone { position: relative; background: radial-gradient(circle at 50% 35%, var(--surface-2), var(--bg) 72%); }
+.scan-zone.analyzing { background: radial-gradient(circle at 50% 35%, var(--surface-2), var(--bg) 72%); }
+.scan-close { position: absolute; top: 12px; right: 12px; z-index: 2; }
+
+/* Блок «сколько съел» в сканере еды */
+.eat-block { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+.eat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+
 .model-load-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .model-chips .chip { max-width: 100%; }
