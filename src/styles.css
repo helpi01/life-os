@@ -519,6 +519,19 @@ img { max-width: 100%; }
   .main { padding: 16px 12px 104px; }
 }
 
+/* ---- Результат сканера: плотный фон и блок банка ---- */
+.scan-result {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px;
+}
+.bank-items { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 8px; }
+.bank-item { display: flex; align-items: center; gap: 8px; }
+.bank-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.bank-cat { width: auto; min-width: 0; flex-shrink: 0; padding: 6px 8px; font-size: 13px; }
+.bank-amount { flex-shrink: 0; font-size: 14px; font-weight: 600; white-space: nowrap; }
+
 /* ---- Визуальный апгрейд интерфейса ---- */
 .app {
   background:

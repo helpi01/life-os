@@ -400,12 +400,20 @@ function Dashboard() {
   )
 }
 
-function Finance() {
+function Finance({ onScan }: any) {
   const [txs, setTxs] = useArtifactState('lifeos_tx', [] as Tx[])
   const [adding, setAdding] = useState(false)
   const [budgets, setBudgets] = useArtifactState('lifeos_budgets', {} as Budgets)
   const [addBudget, setAddBudget] = useState(false)
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
+
+  // Сканер банка добавляет расходы через событие — подхватываем их
+  useEffect(() => {
+    const h = () => { try { setTxs(JSON.parse(localStorage.getItem('lifeos:tx') || '[]')) } catch { /* ignore */ } }
+    window.addEventListener('lifeos-tx-updated', h)
+    return () => window.removeEventListener('lifeos-tx-updated', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const thisMonth = monthOf(todayISO())
   const monthExpenses = txs.filter(t => t.amount < 0 && monthOf(t.date) === thisMonth)
@@ -444,6 +452,7 @@ function Finance() {
         </div>
         <div className="balance-actions">
           <button className="btn scan" onClick={() => setAdding(true)}><ScanLine size={16} /> Добавить расход</button>
+          <button className="btn scan" onClick={() => onScan('bank')}><ImagePlus size={16} /> Скрин банка</button>
         </div>
       </div>
 
@@ -1772,7 +1781,13 @@ function SettingsModal({ onClose, onResetAccess }: any) {
 
 /* ---------- demo flows (scan / plan) ---------- */
 
-function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: () => void, onAdd?: (v: Record<string, string>) => void }) {
+const BANK_ITEMS = [
+  { name: 'Пятёрочка', amount: 1450, cat: 'Еда' },
+  { name: 'Яндекс Такси', amount: 320, cat: 'Транспорт' },
+  { name: 'Кофе и выпечка', amount: 199, cat: 'Еда' },
+]
+
+function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food' | 'bank', onClose: () => void, onAdd?: (v: Record<string, string>) => void, onAddBank?: (items: { name: string; amount: number; cat: string; date: string }[]) => void }) {
   const [step, setStep] = useState<'capture' | 'analyzing' | 'result' | 'error'>('capture')
   const [err, setErr] = useState('')
   const [real, setReal] = useState(false)
@@ -1783,16 +1798,21 @@ function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: 
   const [g, setG] = useState(recFood.netG || 100)
   const [meal, setMeal] = useState('Перекус')
   const [added, setAdded] = useState(false)
+  const [bankItems, setBankItems] = useState(BANK_ITEMS)
+  const [bankCats, setBankCats] = useState<Record<number, string>>({})
+  const [bankAdded, setBankAdded] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const isReceipt = type === 'receipt'
+  const isBank = type === 'bank'
 
   const analyze = async (dataUrl: string) => {
     setStep('analyzing')
     try {
       const settings = getAiSettings('vision')
       const prompts = loadPrompts()
-      const promptDef = PROMPTS.find(p => p.id === (isReceipt ? 'receipt' : 'food'))
-      const sys = prompts[isReceipt ? 'receipt' : 'food'] || (promptDef ? promptDef.text : '')
+      const pid = isReceipt ? 'receipt' : isBank ? 'bank' : 'food'
+      const promptDef = PROMPTS.find(p => p.id === pid)
+      const sys = prompts[pid] || (promptDef ? promptDef.text : '')
       const text = await chatVision(settings, sys, 'Разбери изображение и верни строго JSON по инструкции.', dataUrl)
       const parsed = extractJson(text) as any
       if (isReceipt) {
@@ -1804,6 +1824,12 @@ function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: 
           if (parsed.store) setStore(String(parsed.store))
           if (parsed.total || parsed.total === 0) setRecTotal(Math.max(0, Math.round(Number(parsed.total))))
         }
+      } else if (isBank && parsed && Array.isArray(parsed.items)) {
+        const clean = parsed.items
+          .filter((it: any) => it && typeof it.name === 'string')
+          .map((it: any) => ({ name: String(it.name), amount: Math.max(0, Math.round(Math.abs(Number(it.amount)))), cat: typeof it.cat === 'string' ? String(it.cat) : '' }))
+          .slice(0, 60)
+        if (clean.length) setBankItems(clean)
       } else if (parsed && parsed.name) {
         const name = String(parsed.name)
         const n = parsed.nutrition || parsed
@@ -1864,14 +1890,20 @@ function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: 
     setAdded(true)
   }
 
+  const bankTotal = bankItems.reduce((s, it) => s + it.amount, 0)
+  const addBankTx = () => {
+    if (bankAdded) return
+    if (onAddBank) onAddBank(bankItems.map((it, i) => ({ name: it.name, amount: it.amount, cat: bankCats[i] || it.cat || 'Прочее', date: todayISO() })))
+    setBankAdded(true)
+  }
   return (
     <>
       {step === 'capture' && (
         <div className="scan-zone">
           <button className="icon-btn scan-close" onClick={onClose} aria-label="Закрыть"><X size={18} /></button>
-          <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : <Camera size={30} />}</div>
-          <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : 'Сфотографируйте блюдо'}</p>
-          <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : 'калории и БЖУ'} автоматически</p>
+          <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : isBank ? <Landmark size={30} /> : <Camera size={30} />}</div>
+          <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : isBank ? 'Скриншот банка' : 'Сфотографируйте блюдо'}</p>
+          <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : isBank ? 'операции и разложит по категориям' : 'калории и БЖУ'} автоматически</p>
           <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={onFile} />
           <button className="btn primary sm" onClick={() => fileRef.current?.click()}>Выбрать фото</button>
           <button className="btn sm" onClick={() => { setReal(false); setStep('result') }}>Посмотреть демо-пример</button>
@@ -1882,7 +1914,7 @@ function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: 
         <div className="scan-zone analyzing">
           <Loader2 size={34} className="spin" />
           <p className="scan-title">ИИ распознаёт…</p>
-          <p className="scan-hint">{isReceipt ? 'Читаю текст и определяю категории' : 'Оцениваю состав и калорийность'}</p>
+          <p className="scan-hint">{isReceipt ? 'Читаю текст и определяю категории' : isBank ? 'Читаю операции и раскладываю по категориям' : 'Оцениваю состав и калорийность'}</p>
         </div>
       )}
 
@@ -1903,7 +1935,24 @@ function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: 
             <span className="chip" style={{ marginLeft: 'auto' }}>{real ? 'ИИ' : 'Демо'}</span>
           </div>
 
-          {isReceipt ? (
+          {isBank ? (
+            <>
+              <div className="result-store">Скриншот банка</div>
+              <div className="bank-items">
+                {bankItems.map((it, i) => (
+                  <div key={i} className="bank-item">
+                    <span className="bank-name">{it.name}</span>
+                    <select className="select bank-cat" value={bankCats[i] || it.cat || 'Прочее'} onChange={e => setBankCats(c => ({ ...c, [i]: e.target.value }))}>
+                      {CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                    </select>
+                    <b className="bank-amount">{it.amount} ₽</b>
+                  </div>
+                ))}
+              </div>
+              <div className="receipt-total"><span>Итого</span><b>{bankTotal} ₽</b></div>
+              <button className="btn primary full" onClick={addBankTx} disabled={bankAdded}>{bankAdded ? 'Добавлено в Финансы ✓' : `Добавить ${bankItems.length} расходов в Финансы`}</button>
+            </>
+          ) : isReceipt ? (
             <>
               <div className="result-store">{store}</div>
               <div className="receipt-items">
@@ -2328,7 +2377,7 @@ function AppContent({ onResetAccess }: any) {
   const [theme, setTheme] = useArtifactState('theme', 'dark')
   const [tab, setTab] = useArtifactState('tab', 'dashboard')
   const [quick, setQuick] = useState(false)
-  const [scan, setScan] = useState<'receipt' | 'food' | null>(null)
+  const [scan, setScan] = useState<'receipt' | 'food' | 'bank' | null>(null)
   const [plan, setPlan] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const View = VIEWS[tab] || Dashboard
@@ -2344,6 +2393,17 @@ function AppContent({ onResetAccess }: any) {
       localStorage.setItem('lifeos:xp', JSON.stringify(xp + XPS.foodLogged))
     } catch { /* ignore */ }
     window.dispatchEvent(new CustomEvent('lifeos-food-updated'))
+  }
+
+  const addFromBank = (items: { name: string; amount: number; cat: string; date: string }[]) => {
+    try {
+      const prev: Tx[] = JSON.parse(localStorage.getItem('lifeos:tx') || '[]')
+      const added: Tx[] = items.map(it => ({ id: Date.now() + Math.random(), name: it.name, cat: it.cat, amount: -Math.abs(it.amount), date: it.date }))
+      localStorage.setItem('lifeos:tx', JSON.stringify([...added, ...prev]))
+      const xp = Number(JSON.parse(localStorage.getItem('lifeos:xp') || '0'))
+      localStorage.setItem('lifeos:xp', JSON.stringify(xp + added.length * XPS.txAdded))
+    } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('lifeos-tx-updated'))
   }
   return (
     <div className={`app ${theme}`}>
@@ -2409,7 +2469,7 @@ function AppContent({ onResetAccess }: any) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {scan && <Scanner type={scan} onClose={() => setScan(null)} onAdd={addFromScan} />}
+        {scan && <Scanner type={scan} onClose={() => setScan(null)} onAdd={addFromScan} onAddBank={addFromBank} />}
       </AnimatePresence>
 
       <AnimatePresence>
