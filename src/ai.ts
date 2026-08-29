@@ -5,6 +5,18 @@ export type AiSettings = { baseUrl: string; apiKey: string; model: string }
 
 export class AiNotConfigured extends Error {}
 
+// dsh-sdk-shim хранит значения через JSON.stringify — строки лежат с кавычками.
+// Здесь распознаём их корректно.
+function ls(key: string): string | null {
+  const raw = localStorage.getItem(key)
+  if (raw === null) return null
+  try {
+    const v = JSON.parse(raw)
+    return typeof v === 'string' ? v : String(v)
+  } catch {
+    return raw
+  }
+}
 export const PROVIDER_BASE: Record<string, string> = {
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
   deepseek: 'https://api.deepseek.com/v1',
@@ -15,11 +27,11 @@ export const PROVIDER_BASE: Record<string, string> = {
 
 export function getAiSettings(kind: 'vision' | 'text'): AiSettings {
   const provider =
-    localStorage.getItem('lifeos:ai_' + (kind === 'vision' ? 'vision_' : 'text_') + 'provider') ||
+    ls('lifeos:ai_' + (kind === 'vision' ? 'vision_' : 'text_') + 'provider') ||
     (kind === 'vision' ? 'gemini' : 'deepseek')
 
   const model =
-    localStorage.getItem(kind === 'vision' ? 'lifeos:ai_vision_model' : 'lifeos:ai_text_model') ||
+    ls(kind === 'vision' ? 'lifeos:ai_vision_model' : 'lifeos:ai_text_model') ||
     (kind === 'vision' ? 'gemini-2.5-flash' : 'deepseek-chat')
 
   let keys: { vision?: string; text?: string } = {}
@@ -32,7 +44,7 @@ export function getAiSettings(kind: 'vision' | 'text'): AiSettings {
 
   let baseUrl: string
   if (provider === 'custom') {
-    baseUrl = localStorage.getItem('lifeos:ai_custom_url') || ''
+    baseUrl = ls('lifeos:ai_custom_url') || ''
   } else {
     baseUrl = PROVIDER_BASE[provider] || ''
   }
