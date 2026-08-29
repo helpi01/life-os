@@ -1116,7 +1116,7 @@ function AI() {
       const reply = await chatCompletion(settings, prompts.chat || (promptDef ? promptDef.text : ''), q)
       setMsgs(m => [...m, { role: 'ai', text: reply }])
     } catch (e) {
-      setMsgs(m => [...m, { role: 'ai', text: e instanceof AiNotConfigured ? 'Подключи текстовую модель в настройках (шестерёнка сверху) — и я начну отвечать по-настоящему.' : 'Не удалось получить ответ: ' + (e instanceof Error ? e.message : 'ошибка') + '. Проверь модель и ключ в настройках.' }])
+      setMsgs(m => [...m, { role: 'ai', text: e instanceof AiNotConfigured ? e.message : 'Не удалось получить ответ: ' + (e instanceof Error ? e.message : 'ошибка') + '. Проверь модель и ключ в настройках.' }])
     }
     setThinking(false)
   }

@@ -37,9 +37,9 @@ export function getAiSettings(kind: 'vision' | 'text'): AiSettings {
     baseUrl = PROVIDER_BASE[provider] || ''
   }
 
-  if (!baseUrl || !model || !apiKey) {
-    throw new AiNotConfigured('Подключи модель и API-ключ в настройках')
-  }
+  if (!baseUrl) throw new AiNotConfigured('Не задан адрес API: в настройках выбери «Свой агрегатор» и впиши Base URL')
+  if (!apiKey) throw new AiNotConfigured('Не вписан API-ключ: открой настройки (шестерёнка сверху) и вставь ключ в любую карточку')
+  if (!model) throw new AiNotConfigured('Не выбрана модель: в настройках выбери модель из списка или впиши её вручную')
 
   return { baseUrl, apiKey, model }
 }
