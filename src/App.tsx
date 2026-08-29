@@ -1112,6 +1112,14 @@ function Food({ onScan }: any) {
   const [calGoal, setCalGoal] = useArtifactState('food_cal_goal', '')
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
+  // Сканер добавляет записи через событие — подхватываем их в дневник
+  useEffect(() => {
+    const h = () => { try { setFood(JSON.parse(localStorage.getItem('lifeos:food') || '[]')) } catch { /* ignore */ } }
+    window.addEventListener('lifeos-food-updated', h)
+    return () => window.removeEventListener('lifeos-food-updated', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const today = todayISO()
   const todayFood = food.filter(f => f.date === today)
   const todayKcal = todayFood.reduce((s, f) => s + f.kcal, 0)
@@ -1484,7 +1492,7 @@ function SettingsModal({ onClose, onResetAccess }: any) {
 
 /* ---------- demo flows (scan / plan) ---------- */
 
-function Scanner({ type, onClose }: { type: 'receipt' | 'food', onClose: () => void }) {
+function Scanner({ type, onClose, onAdd }: { type: 'receipt' | 'food', onClose: () => void, onAdd?: (v: Record<string, string>) => void }) {
   const [step, setStep] = useState<'capture' | 'analyzing' | 'result' | 'error'>('capture')
   const [err, setErr] = useState('')
   const [real, setReal] = useState(false)
@@ -1492,6 +1500,9 @@ function Scanner({ type, onClose }: { type: 'receipt' | 'food', onClose: () => v
   const [store, setStore] = useState('Супермаркет «Пятёрочка»')
   const [recTotal, setRecTotal] = useState(() => RECEIPT_ITEMS.reduce((s, i) => s + i.price, 0))
   const [recFood, setRecFood] = useState(FOOD_RESULT)
+  const [g, setG] = useState(recFood.netG || 100)
+  const [meal, setMeal] = useState('Перекус')
+  const [added, setAdded] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const isReceipt = type === 'receipt'
 
@@ -1513,14 +1524,33 @@ function Scanner({ type, onClose }: { type: 'receipt' | 'food', onClose: () => v
           if (parsed.store) setStore(String(parsed.store))
           if (parsed.total || parsed.total === 0) setRecTotal(Math.max(0, Math.round(Number(parsed.total))))
         }
-      } else if (parsed && parsed.name && Number.isFinite(Number(parsed.kcal))) {
-        setRecFood({
-          name: String(parsed.name),
-          kcal: Math.max(0, Math.round(Number(parsed.kcal))),
-          protein: Math.max(0, Math.round(Number(parsed.protein || 0))),
-          fat: Math.max(0, Math.round(Number(parsed.fat || 0))),
-          carbs: Math.max(0, Math.round(Number(parsed.carbs || 0))),
-        })
+      } else if (parsed && parsed.name) {
+        const name = String(parsed.name)
+        const n = parsed.nutrition || parsed
+        const k100 = Number(n.kcal_per_100)
+        if (Number.isFinite(k100) && k100 > 0) {
+          setRecFood({
+            name,
+            kcal: Math.max(0, Math.round(k100)),
+            protein: Math.max(0, Math.round(Number(n.protein_per_100 || 0))),
+            fat: Math.max(0, Math.round(Number(n.fat_per_100 || 0))),
+            carbs: Math.max(0, Math.round(Number(n.carbs_per_100 || 0))),
+            per100: true,
+            netG: Number(n.net_g) > 0 ? Math.round(Number(n.net_g)) : null,
+          })
+          setG(Number(n.net_g) > 0 ? Math.round(Number(n.net_g)) : 100)
+        } else if (Number.isFinite(Number(parsed.kcal))) {
+          setRecFood({
+            name,
+            kcal: Math.max(0, Math.round(Number(parsed.kcal))),
+            protein: Math.max(0, Math.round(Number(parsed.protein || 0))),
+            fat: Math.max(0, Math.round(Number(parsed.fat || 0))),
+            carbs: Math.max(0, Math.round(Number(parsed.carbs || 0))),
+            per100: false,
+            netG: null,
+          })
+          setG(1)
+        }
       }
       setReal(true)
       setStep('result')
@@ -1545,6 +1575,13 @@ function Scanner({ type, onClose }: { type: 'receipt' | 'food', onClose: () => v
       setErr('Не удалось прочитать файл. Попробуй другое фото.')
       setStep('error')
     }
+  }
+
+  const totalKcal = recFood.per100 ? Math.round(recFood.kcal * g / 100) : Math.round(recFood.kcal * g)
+  const addToDiary = () => {
+    if (added) return
+    if (onAdd) onAdd({ name: recFood.name, meal, kcal: String(totalKcal) })
+    setAdded(true)
   }
 
   return (
@@ -1600,11 +1637,41 @@ function Scanner({ type, onClose }: { type: 'receipt' | 'food', onClose: () => v
             <>
               <div className="result-store">{recFood.name}</div>
               <div className="macro-grid">
-                <div className="macro"><span>Калории</span><b>{recFood.kcal}</b><small>ккал</small></div>
+                <div className="macro"><span>Калории</span><b>{recFood.kcal}</b><small>{recFood.per100 ? 'ккал/100 г' : 'ккал/порция'}</small></div>
                 <div className="macro"><span>Белки</span><b>{recFood.protein}</b><small>г</small></div>
                 <div className="macro"><span>Жиры</span><b>{recFood.fat}</b><small>г</small></div>
                 <div className="macro"><span>Углеводы</span><b>{recFood.carbs}</b><small>г</small></div>
               </div>
+
+              <div className="eat-block">
+                <label className="field-label">Сколько съел?</label>
+                {recFood.per100 ? (
+                  <>
+                    <div className="eat-chips">
+                      {recFood.netG ? <button className={`chip click ${g === recFood.netG ? 'sel' : ''}`} onClick={() => setG(recFood.netG!)}>Вся упаковка {recFood.netG} г</button> : null}
+                      {recFood.netG ? <button className={`chip click ${g === Math.round(recFood.netG! / 2) ? 'sel' : ''}`} onClick={() => setG(Math.round(recFood.netG! / 2))}>Половина</button> : null}
+                      <button className={`chip click ${g === 100 ? 'sel' : ''}`} onClick={() => setG(100)}>100 г</button>
+                      <button className={`chip click ${g === 50 ? 'sel' : ''}`} onClick={() => setG(50)}>50 г</button>
+                    </div>
+                    <div className="weight-row">
+                      <div className="weight-input-wrap">
+                        <input type="number" inputMode="decimal" className="weight-input" value={String(g)} onChange={e => setG(Math.max(0, Number(e.target.value) || 0))} placeholder="100" />
+                        <span className="weight-unit">г</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="eat-chips">
+                    {[1, 2, 3].map(n => <button key={n} className={`chip click ${g === n ? 'sel' : ''}`} onClick={() => setG(n)}>×{n} порций</button>)}
+                  </div>
+                )}
+                <label className="field-label">Куда добавить?</label>
+                <div className="eat-chips">
+                  {MEALS.map(m => <button key={m} className={`chip click ${meal === m ? 'sel' : ''}`} onClick={() => setMeal(m)}>{m}</button>)}
+                </div>
+              </div>
+
+              <button className="btn primary full" onClick={addToDiary} disabled={added}>{added ? 'Добавлено в дневник ✓' : <>Добавить в дневник · {totalKcal} ккал</>}</button>
             </>
           )}
 
@@ -1625,11 +1692,13 @@ const RECEIPT_ITEMS = [
 ]
 
 const FOOD_RESULT = {
-  name: 'Куриная грудка с рисом и овощами',
-  kcal: 520,
-  protein: 42,
-  fat: 12,
-  carbs: 58,
+  name: 'Чипсы с солью (упаковка)',
+  kcal: 525,
+  protein: 7,
+  fat: 33,
+  carbs: 52,
+  per100: true,
+  netG: 135,
 }
 
 function PlanBuilder({ onClose }: { onClose: () => void }) {
@@ -1983,6 +2052,18 @@ function AppContent({ onResetAccess }: any) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const View = VIEWS[tab] || Dashboard
 
+  const addFromScan = (v: Record<string, string>) => {
+    const date = todayISO()
+    try {
+      const prev = JSON.parse(localStorage.getItem('lifeos:food') || '[]')
+      localStorage.setItem('lifeos:food', JSON.stringify([{ id: Date.now(), name: v.name, meal: v.meal, kcal: Number(v.kcal), date }, ...prev]))
+    } catch { /* ignore */ }
+    try {
+      const xp = Number(JSON.parse(localStorage.getItem('lifeos:xp') || '0'))
+      localStorage.setItem('lifeos:xp', JSON.stringify(xp + XPS.foodLogged))
+    } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('lifeos-food-updated'))
+  }
   return (
     <div className={`app ${theme}`}>
       <aside className="sidebar">
@@ -2047,7 +2128,7 @@ function AppContent({ onResetAccess }: any) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {scan && <Scanner type={scan} onClose={() => setScan(null)} />}
+        {scan && <Scanner type={scan} onClose={() => setScan(null)} onAdd={addFromScan} />}
       </AnimatePresence>
 
       <AnimatePresence>

@@ -431,6 +431,10 @@ body { font-family: var(--font); }
 .import-actions .btn { width: 100%; justify-content: center; }
 .import-actions .tx-cat { margin: 0; }
 
+/* Блок «сколько съел» в сканере еды */
+.eat-block { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+.eat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+
 .model-load-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .model-chips .chip { max-width: 100%; }
