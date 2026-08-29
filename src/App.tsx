@@ -1202,11 +1202,11 @@ function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvide
             <>
               <label className="field-label">{kind === 'vision' ? 'Vision-модели (для фото)' : 'Текстовые модели (чат и планы)'}</label>
               <div className="model-chips">
-                {customModels.filter(m => (kind === 'vision') === m.vision).slice(0, 12).map(m => (
+                {customModels.filter(m => (kind === 'vision') === m.vision).slice(0, 30).map(m => (
                   <button key={m.id} className={`chip click ${model === m.id ? 'sel' : ''}`} onClick={() => setModel(m.id)}>{m.id}</button>
                 ))}
               </div>
-              <p className="tx-cat">Показаны первые 12 моделей. Если нужной нет — впиши её название вручную ниже.</p>
+              <p className="tx-cat">Показаны первые 30 моделей. Если нужной нет — впиши её название вручную ниже.</p>
             </>
           )}
           <label className="field-label">Название модели (вручную)</label>
@@ -1276,7 +1276,7 @@ function SettingsModal({ onClose, onResetAccess }: any) {
         .map((m: any) => {
           const id = (m.id || m.name || '').trim()
           if (!id) return null
-          const vision = m.support_vision === true || /vision|multimodal|moondream|qwen2-vl|\bvl\b|minicpm-v|\bglm-4v\b|llava/i.test(id)
+          const vision = m.support_vision === true || m.capabilities?.vision === true || /vision|multimodal|moondream|qwen2-vl|\bvl\b|minicpm-v|\bglm-4v\b|llava/i.test(id)
           return { id, vision }
         })
         .filter(Boolean) as { id: string; vision: boolean }[]
