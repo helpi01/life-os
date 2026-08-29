@@ -11,6 +11,9 @@ import {
   MessageSquare, LineChart, Landmark, Coins, RefreshCw, Trash2,
   Download, Upload, Star,
 } from 'lucide-react'
+import * as pdfjs from 'pdfjs-dist'
+import { GlobalWorkerOptions } from 'pdfjs-dist'
+import workerRaw from 'pdfjs-dist/build/pdf.worker.min.mjs?raw'
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer,
   XAxis, YAxis, Tooltip, CartesianGrid, LineChart as RLineChart, Line,
@@ -1787,6 +1790,30 @@ const BANK_ITEMS = [
   { name: 'Кофе и выпечка', amount: 199, cat: 'Еда' },
 ]
 
+// PDF-выписки: извлекаем текст прямо в браузере (pdf.js в отдельном worker'e)
+let ensurePdfWorker = () => {
+  if (GlobalWorkerOptions.workerPort) return
+  try {
+    const blob = new Blob([workerRaw], { type: 'text/javascript' })
+    GlobalWorkerOptions.workerPort = new Worker(URL.createObjectURL(blob))
+  } catch { /* pdf.js использует fallback на главном потоке */ }
+}
+const pdfToText = async (buf: ArrayBuffer) => {
+  ensurePdfWorker()
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise
+  let out = ''
+  try {
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i)
+      const tc = await page.getTextContent()
+      out += (tc.items as any[]).map((it: any) => (it.str != null ? it.str : '')).join(' ') + '\n'
+    }
+  } finally {
+    void doc.destroy()
+  }
+  return out
+}
+
 function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food' | 'bank', onClose: () => void, onAdd?: (v: Record<string, string>) => void, onAddBank?: (items: { name: string; amount: number; cat: string; date: string }[]) => void }) {
   const [step, setStep] = useState<'capture' | 'analyzing' | 'result' | 'error'>('capture')
   const [err, setErr] = useState('')
@@ -1871,14 +1898,57 @@ function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food'
     }
   }
 
+  const analyzeText = async (text: string, fname: string) => {
+    setStep('analyzing')
+    try {
+      const settings = getAiSettings('text')
+      const prompts = loadPrompts()
+      const pid = 'bank'
+      const sys = prompts[pid] || (PROMPTS.find(p => p.id === pid)?.text || '')
+      const reply = await chatCompletion(settings, sys, `Это текст выписки из файла «${fname}». Разбери операции: ${text.slice(0, 30000)}`)
+      const parsed = extractJson(reply) as any
+      if (parsed && Array.isArray(parsed.items)) {
+        const clean = parsed.items
+          .filter((it: any) => it && typeof it.name === 'string')
+          .map((it: any) => ({ name: String(it.name), amount: Math.max(0, Math.round(Math.abs(Number(it.amount)))), cat: typeof it.cat === 'string' ? String(it.cat) : '' }))
+          .slice(0, 60)
+        if (clean.length) setBankItems(clean)
+        setReal(true)
+        setStep('result')
+      } else {
+        setErr('ИИ не нашёл операции в файле. Попробуй CSV/TXT или скриншот выписки.')
+        setStep('error')
+      }
+    } catch (e) {
+      if (e instanceof AiNotConfigured) {
+        setReal(false)
+        setStep('result')
+      } else {
+        setErr('Не удалось разобрать файл: ' + (e instanceof Error ? e.message : 'ошибка'))
+        setStep('error')
+      }
+    }
+  }
+
   const onFile = async ({ target }: { target: HTMLInputElement }) => {
     const f = target.files?.[0]
     if (!f) return
     try {
-      const dataUrl = await readFileAsDataUrl(f)
-      analyze(dataUrl)
+      if (isBank && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) {
+        const text = await pdfToText(await f.arrayBuffer())
+        if (text.trim().length < 30) {
+          setErr('Не удалось извлечь текст из PDF — похоже, это скан. Сделай скриншот выписки или загрузи CSV.')
+          setStep('error')
+          return
+        }
+        analyzeText(text, f.name)
+      } else if (isBank && /\.(txt|csv)$/i.test(f.name)) {
+        analyzeText(await f.text(), f.name)
+      } else {
+        analyze(await readFileAsDataUrl(f))
+      }
     } catch {
-      setErr('Не удалось прочитать файл. Попробуй другое фото.')
+      setErr('Не удалось прочитать файл. Попробуй другой файл или скриншот.')
       setStep('error')
     }
   }
@@ -1904,8 +1974,8 @@ function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food'
           <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : isBank ? <Landmark size={30} /> : <Camera size={30} />}</div>
           <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : isBank ? 'Скриншот банка' : 'Сфотографируйте блюдо'}</p>
           <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : isBank ? 'операции и разложит по категориям' : 'калории и БЖУ'} автоматически</p>
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={onFile} />
-          <button className="btn primary sm" onClick={() => fileRef.current?.click()}>Выбрать фото</button>
+          <input ref={fileRef} type="file" accept={isBank ? 'image/*,.pdf,.txt,.csv' : 'image/*'} capture={isBank ? undefined : 'environment'} style={{ display: 'none' }} onChange={onFile} />
+          <button className="btn primary sm" onClick={() => fileRef.current?.click()}>{isBank ? 'Выбрать фото или файл' : 'Выбрать фото'}</button>
           <button className="btn sm" onClick={() => { setReal(false); setStep('result') }}>Посмотреть демо-пример</button>
         </div>
       )}
