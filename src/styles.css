@@ -434,3 +434,38 @@ body { font-family: var(--font); }
 .model-load-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .model-chips .chip { max-width: 100%; }
+
+/* ---- Мобильная адаптация: поля, полосы, шторки ---- */
+html, body { overflow-x: hidden; }
+.app { min-width: 0; }
+.main { min-width: 0; max-width: 100%; }
+img { max-width: 100%; }
+
+/* Поля веса и калорий — в тему, а не белые */
+.weight-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.weight-input-wrap { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.weight-input,
+.weight-input-wrap input {
+  width: 100%; min-width: 0; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  font-size: 15px; font-family: var(--font); outline: none;
+}
+.weight-input:focus,
+.weight-input-wrap input:focus { border-color: #8b5cf6; }
+.weight-unit { color: var(--muted); font-size: 14px; flex-shrink: 0; }
+
+/* Телефон: модалки — полноэкранные шторки снизу */
+@media (max-width: 520px) {
+  .overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    width: 100%; max-width: 100%; max-height: 94dvh; border-radius: 22px 22px 0 0;
+    padding: 20px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .modal.wide { max-width: 100%; }
+  .scan-zone { padding: 26px 16px; }
+  .scan-zone .btn { width: 100%; justify-content: center; }
+  .macro-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .bottom-nav .nav-item { flex: 1; min-width: 0; gap: 2px; }
+  .bottom-nav .nav-item span { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .main { padding: 16px 12px 104px; }
+}
