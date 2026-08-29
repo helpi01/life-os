@@ -191,6 +191,21 @@ const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: 
 
 type SleepEntry = { id: number; date: string; bed: number; woke: number }
 
+function Ring({ pct, size = 64, stroke = 7, color = '#8b5cf6', children }: { pct: number; size?: number; stroke?: number; color?: string; children?: any }) {
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const off = c - (Math.min(100, Math.max(0, pct)) / 100) * c
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--ring-bg)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off} />
+      </g>
+      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fill="var(--text)" fontSize={Math.max(10, size / 4.6)} fontWeight={700}>{children}</text>
+    </svg>
+  )
+}
+
 function Dashboard() {
   const [txs] = useArtifactState('lifeos_tx', [] as Tx[])
   const [food] = useArtifactState('lifeos_food', [] as FoodEntry[])
@@ -1245,9 +1260,13 @@ function Health() {
           <button className="chip click" onClick={() => addSteps(2000)}>+2000</button>
           <button className="chip click" onClick={() => addSteps(5000)}>+5000</button>
         </div>
-        <label className="field-label">Цель: {stepsGoal} шагов</label>
-        <div className={`budget-bar`}><div className={`budget-fill ${(stepsT.d === todayISO() ? stepsT.v : 0) >= stepsGoal ? 'over' : ''}`} style={{ width: Math.min(100, ((stepsT.d === todayISO() ? stepsT.v : 0) / stepsGoal) * 100) + '%' }} /></div>
-        <span className="tx-cat">10 000 шагов в день = достижение и +{XPS.stepsDay} XP</span>
+        <div className="track-ring">
+          <Ring pct={Math.min(100, ((stepsT.d === todayISO() ? stepsT.v : 0) / stepsGoal) * 100)}>{Math.round(((stepsT.d === todayISO() ? stepsT.v : 0) / 1000) * 10) / 10}к</Ring>
+          <div className="track-ring-info">
+            <span className="tx-name">Осталось {Math.max(0, stepsGoal - (stepsT.d === todayISO() ? stepsT.v : 0))} шагов</span>
+            <span className="tx-cat">{stepsGoal} шагов в день = +{XPS.stepsDay} XP и достижение</span>
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -1263,8 +1282,13 @@ function Health() {
           <button className="chip click" onClick={() => addWater(500)}>+500 мл</button>
           <button className="chip click" onClick={() => addWater(1000)}>+1000 мл</button>
         </div>
-        <div className="budget-bar"><div className={`budget-fill ${(wtr.d === todayISO() ? wtr.ml : 0) > Number(wGoal || 2000) ? 'over' : ''}`} style={{ width: Math.min(100, ((wtr.d === todayISO() ? wtr.ml : 0) / Number(wGoal || 2000)) * 100) + '%' }} /></div>
-        <span className="tx-cat">+{XPS.water} XP за каждый стакан · сегодня {Math.round((wtr.d === todayISO() ? wtr.ml : 0) / 250)} стаканов</span>
+        <div className="track-ring">
+          <Ring pct={Math.min(100, ((wtr.d === todayISO() ? wtr.ml : 0) / Number(wGoal || 2000)) * 100)} color="#0ea5e9">{wtr.d === todayISO() ? wtr.ml : 0} мл</Ring>
+          <div className="track-ring-info">
+            <span className="tx-name">Норма {wGoal || 2000} мл</span>
+            <span className="tx-cat">+{XPS.water} XP за стакан · {Math.round((wtr.d === todayISO() ? wtr.ml : 0) / 250)} стаканов</span>
+          </div>
+        </div>
       </div>
 
       <div className="card">
