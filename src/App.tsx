@@ -22,6 +22,8 @@ import { CATEGORIES, MEALS, TYPES, HABIT_META } from './data'
 import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
 import { levelFor, XPS, ACHIEVEMENTS } from './gamification'
 import type { Stats } from './gamification'
+import { generateInsights } from './insights'
+import { generatePlan, whyThisPlan } from './aiPlan'
 import { xpGain, XP_CAPS } from './xp'
 import { addCount, countOn, last7Dates, dayLabel, daysAgoISO, BAD_XP } from './badHabits'
 import type { BadHabit, BadLog } from './badHabits'
@@ -266,6 +268,36 @@ function Dashboard() {
   }
   const sleepToday = sleepLog.find(s => s.date === today)
   const unlocked = ACHIEVEMENTS.filter(a => a.test(stats)).map(a => a.id)
+  const [insights, setInsights] = useState<string[]>([])
+
+  useEffect(() => {
+    const h = (e: Event) => {
+      const amount = Number((e as CustomEvent).detail?.amount || 0)
+      if (amount <= 0) return
+      try {
+        const bs: Boss[] = JSON.parse(localStorage.getItem('lifeos:bosses') || '[]')
+        let hit = false
+        const next = bs.map(b => {
+          if (hit || b.done || b.hp <= 0) return b
+          hit = true
+          const hp = Math.max(0, b.hp - amount)
+          if (hp <= 0) xpGain(setXp, XPS.bossWin, 'bossWin', 50)
+          return { ...b, hp, done: hp <= 0 }
+        })
+        if (hit) { localStorage.setItem('lifeos:bosses', JSON.stringify(next)); setBosses(next) }
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('lifeos-boss-dmg', h)
+    return () => window.removeEventListener('lifeos-boss-dmg', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    let badLogs: any[] = []
+    try { badLogs = JSON.parse(localStorage.getItem('lifeos:bad_logs') || '[]') } catch { /* ignore */ }
+    setInsights(generateInsights({ txs, food, workouts, habits, sleepLog: sleepLog as any, mood: moodMark, badLogs, tasks }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txs, food, workouts, habits, sleepLog, moodMark, tasks])
 
   const addQuest = (v: Record<string, string>) => {
     setQuests(q => [...q, { id: Date.now(), name: v.name, total: Math.max(1, Number(v.total) || 1) }])
@@ -356,63 +388,6 @@ function Dashboard() {
 
   return (
     <div className="view">
-      <div className="hero">
-        <div>
-          <h1>Привет 👋</h1>
-          <p>Сводка за сегодня, {fmtDate(today)}</p>
-        </div>
-        <div className="hero-ring">
-          <svg viewBox="0 0 100 100" width="92" height="92">
-            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--ring-bg)" strokeWidth="10" />
-            <circle cx="50" cy="50" r="42" fill="none" stroke="url(#g)" strokeWidth="10" strokeLinecap="round" strokeDasharray="264" strokeDashoffset="66" transform="rotate(-90 50 50)" />
-            <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#8b5cf6" /></linearGradient></defs>
-          </svg>
-          <div className="ring-center"><strong>0%</strong><span>дня</span></div>
-        </div>
-      </div>
-
-      <div className="card level-card">
-        <div className="level-info">
-          <div className="level-badge"><Crown size={22} /></div>
-          <div className="level-body">
-            <div className="level-title"><span>Уровень {lv.level}</span><span className="level-rank">{lv.name}</span></div>
-            <div className="xp-bar"><div className="xp-fill" style={{ width: lv.pct + '%' }} /></div>
-            <span className="stat-sub">{fmt(xp)} XP · ещё {fmt(Math.max(0, lv.nextXp - xp))} XP до уровня {lv.level + 1}</span>
-          </div>
-        </div>
-        <div className="achievements">
-          {ACHIEVEMENTS.map(a => {
-            const I = achIcons[a.icon]
-            const on = unlocked.includes(a.id)
-            return (
-              <div key={a.id} className={`ach ${on ? 'on' : ''}`} title={on ? a.name + ' — открыто!' : a.name + ' — ' + a.hint}>
-                <I size={18} />
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      <div className="grid-4">
-        <StatCard icon={Wallet} label="Расходы сегодня" value={fmtMoney(todaySpent)} sub="по записям" tone="violet" />
-        <StatCard icon={Flame} label="Калории сегодня" value={fmt(todayKcal)} sub="ккал" tone="orange" />
-        <StatCard icon={Dumbbell} label="Тренировок на неделе" value={String(weekWorkouts.length)} sub={weekWorkouts.reduce((s, w) => s + w.durMin, 0) + ' мин за неделю'} tone="green" />
-        <StatCard icon={Repeat} label="Привычек сделано" value={`${doneHabits} из ${habits.length}`} sub={habits.length ? 'сегодня' : 'добавь привычки'} tone="blue" />
-      </div>
-
-      <div className="card">
-      <div className="card-head"><h3>Итог дня</h3><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><button className="btn sm" onClick={() => setReportOpen(true)}><Sparkles size={13} /> Отчёт</button><span className="chip">сегодня</span></div></div>
-        <div className="day-summary">
-          <div className="day-sum-item"><Repeat size={16} /> Привычки: <b>{doneHabits} из {habits.length}</b></div>
-          <div className="day-sum-item"><Utensils size={16} /> Калории: <b>{fmt(todayKcal)} ккал</b></div>
-          <div className="day-sum-item"><Droplet size={16} /> Вода: <b>{wtr.d === today ? wtr.ml : 0} мл</b></div>
-          <div className="day-sum-item"><Footprints size={16} /> Шаги: <b>{stepsT.d === today ? fmt(stepsT.v) : 0}</b> / {fmt(stepsGoal)}</div>
-          <div className="day-sum-item"><Dumbbell size={16} /> Тренировки: <b>{workouts.filter(w => w.date === today).length}</b></div>
-          <div className="day-sum-item"><CheckCircle2 size={16} /> Сон: <b>{sleepToday ? sleepHours(sleepToday.bed, sleepToday.woke) + ' ч' : '—'}</b></div>
-          <div className="day-sum-item"><Sparkles size={16} /> Настроение: <b>{moodMark[today] ? ['😐', '🙂', '😄', '😊', '😌'][moodMark[today] - 1] : '—'}</b></div>
-        </div>
-      </div>
-
       {/* Утро: короткий вопрос о состоянии */}
       {morning.d !== today && (
         <div className="card morning-card">
@@ -442,6 +417,19 @@ function Dashboard() {
           </div>
         </div>
       )}
+
+      <div className="card">
+      <div className="card-head"><h3>Итог дня</h3><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><button className="btn sm" onClick={() => setReportOpen(true)}><Sparkles size={13} /> Отчёт</button><span className="chip">сегодня</span></div></div>
+        <div className="day-summary">
+          <div className="day-sum-item"><Repeat size={16} /> Привычки: <b>{doneHabits} из {habits.length}</b></div>
+          <div className="day-sum-item"><Utensils size={16} /> Калории: <b>{fmt(todayKcal)} ккал</b></div>
+          <div className="day-sum-item"><Droplet size={16} /> Вода: <b>{wtr.d === today ? wtr.ml : 0} мл</b></div>
+          <div className="day-sum-item"><Footprints size={16} /> Шаги: <b>{stepsT.d === today ? fmt(stepsT.v) : 0}</b> / {fmt(stepsGoal)}</div>
+          <div className="day-sum-item"><Dumbbell size={16} /> Тренировки: <b>{workouts.filter(w => w.date === today).length}</b></div>
+          <div className="day-sum-item"><CheckCircle2 size={16} /> Сон: <b>{sleepToday ? sleepHours(sleepToday.bed, sleepToday.woke) + ' ч' : '—'}</b></div>
+          <div className="day-sum-item"><Sparkles size={16} /> Настроение: <b>{moodMark[today] ? ['😐', '🙂', '😄', '😊', '😌'][moodMark[today] - 1] : '—'}</b></div>
+        </div>
+      </div>
 
       {/* Вечерний итог */}
       {morning.d === today && evening.d !== today && (
@@ -485,6 +473,13 @@ function Dashboard() {
         )}
       </div>
 
+      <div className="grid-4">
+        <StatCard icon={Wallet} label="Расходы сегодня" value={fmtMoney(todaySpent)} sub="по записям" tone="violet" />
+        <StatCard icon={Flame} label="Калории сегодня" value={fmt(todayKcal)} sub="ккал" tone="orange" />
+        <StatCard icon={Dumbbell} label="Тренировок на неделе" value={String(weekWorkouts.length)} sub={weekWorkouts.reduce((s, w) => s + w.durMin, 0) + ' мин за неделю'} tone="green" />
+        <StatCard icon={Repeat} label="Привычек сделано" value={`${doneHabits} из ${habits.length}`} sub={habits.length ? 'сегодня' : 'добавь привычки'} tone="blue" />
+      </div>
+
       {/* Характеристики */}
       <div className="card">
         <div className="card-head"><h3>Характеристики</h3><span className="chip">растут от действий</span></div>
@@ -520,9 +515,9 @@ function Dashboard() {
             <div className="sheet-head"><h3>Отчёт за неделю</h3><button className="icon-btn" onClick={() => setReportOpen(false)}><X size={18} /></button></div>
             <div className="field-stack">
               {reportState.s === 'idle' && <><p className="tx-cat">ИИ проанализирует задачи, привычки, сон, расходы и еду за 7 дней и предложит, что скорректировать.</p><button className="btn primary full" onClick={runReport}>Сформировать отчёт</button></>}
-              {reportState.s === 'loading' && <div className="report-loading"><span className="tx-cat">Анализирую неделю…</span></div>}
+              {reportState.s === 'loading' && <div className="report-loading"><Loader2 size={16} className="spin" /> Анализирую неделю… <button className="btn sm" onClick={() => setReportState({ s: 'idle' })}>Отмена</button></div>}
               {reportState.s === 'done' && <div className="report-text">{reportState.text}</div>}
-              {reportState.s === 'error' && <><p className="tx-cat">{reportState.text}</p><button className="btn primary full" onClick={runReport}>Повторить</button></>}
+              {reportState.s === 'error' && <><p className="tx-cat">{reportState.text}</p><button className="btn primary full" onClick={runReport}>Повторить</button><button className="btn full" style={{ width: '100%' }} onClick={() => setReportState({ s: 'done', text: buildWeekContext() })}>Показать факты без ИИ</button></>}
             </div>
           </div>
         </div>
@@ -549,7 +544,9 @@ function Dashboard() {
         <div className="card">
           <div className="card-head"><h3>ИИ заметил</h3><span className="chip ai"><Brain size={13} /> ИИ</span></div>
           <div className="insights">
-            {INSIGHTS.map((t, i) => (
+            {insights.length === 0 ? (
+              <div className="insight"><Sparkles size={16} /><p>Добавь несколько записей за пару дней — ИИ начнёт замечать закономерности.</p></div>
+            ) : insights.map((t, i) => (
               <div key={i} className="insight"><Sparkles size={16} /><p>{t}</p></div>
             ))}
           </div>
@@ -608,7 +605,28 @@ function Dashboard() {
           onClose={() => setAddQ(false)}
         />
       )}
-    </div>
+      <div className="card level-card">
+        <div className="level-info">
+          <div className="level-badge"><Crown size={22} /></div>
+          <div className="level-body">
+            <div className="level-title"><span>Уровень {lv.level}</span><span className="level-rank">{lv.name}</span></div>
+            <div className="xp-bar"><div className="xp-fill" style={{ width: lv.pct + '%' }} /></div>
+            <span className="stat-sub">{fmt(xp)} XP · ещё {fmt(Math.max(0, lv.nextXp - xp))} XP до уровня {lv.level + 1}</span>
+          </div>
+        </div>
+        <div className="achievements">
+          {ACHIEVEMENTS.map(a => {
+            const I = achIcons[a.icon]
+            const on = unlocked.includes(a.id)
+            return (
+              <div key={a.id} className={`ach ${on ? 'on' : ''}`} title={on ? a.name + ' — открыто!' : a.name + ' — ' + a.hint}>
+                <I size={18} />
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      </div>
   )
 }
 
@@ -1003,6 +1021,7 @@ function Sport() {
   const addWorkout = (v: Record<string, string>) => {
     setWorkouts(w => [{ id: Date.now(), name: v.name, date: todayISO(), durMin: Number(v.durMin), kcal: Number(v.kcal) }, ...w])
     xpGain(setXp, XPS.workoutAdded, 'workout', XP_CAPS.workout)
+    window.dispatchEvent(new CustomEvent('lifeos-boss-dmg', { detail: { amount: 15 } }))
     setAdding(false)
   }
 
@@ -1094,8 +1113,9 @@ function Habits() {
   }
   const toggle = (id: number) => {
     const h = habits.find(x => x.id === id)
-    if (h && !h.done) setXp(x => x + XPS.habitDone)
     if (h && !h.done) xpGain(setXp, XPS.habitDone, 'habit', XP_CAPS.habit)
+    if (h && !h.done) window.dispatchEvent(new CustomEvent('lifeos-boss-dmg', { detail: { amount: 5 } }))
+    setHabits(hs => hs.map(x => x.id === id ? { ...x, done: !x.done, streak: x.done ? x.streak : x.streak + 1 } : x))
   }
 
   const addBad = (v: Record<string, string>) => {
@@ -1230,6 +1250,12 @@ function Habits() {
 
 function Plans({ onPlan }: any) {
   const [tasks, setTasks] = useArtifactState('lifeos_tasks', [] as Task[])
+  useEffect(() => {
+    const h = () => { try { setTasks(JSON.parse(localStorage.getItem('lifeos:tasks') || '[]')) } catch { /* ignore */ } }
+    window.addEventListener('lifeos-tasks-updated', h)
+    return () => window.removeEventListener('lifeos-tasks-updated', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [adding, setAdding] = useState(false)
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
 
@@ -1242,6 +1268,7 @@ function Plans({ onPlan }: any) {
   const toggle = (id: number) => {
     const t = tasks.find(x => x.id === id)
     if (t && !t.done) xpGain(setXp, XPS.taskDone, 'task', XP_CAPS.task)
+    if (t && !t.done) window.dispatchEvent(new CustomEvent('lifeos-boss-dmg', { detail: { amount: 10 } }))
     setTasks(ts => ts.map(x => x.id === id ? { ...x, done: !x.done } : x))
   }
 
@@ -1610,6 +1637,7 @@ function Focus() {
     const d = todayISO()
     setFocusList(l => [{ id: Date.now(), date: d, mins, task: task.trim() }, ...l])
     xpGain(setXp, XPS.focus, 'focus', 40)
+    window.dispatchEvent(new CustomEvent('lifeos-boss-dmg', { detail: { amount: 5 } }))
     setDoneId(Date.now())
     setTimeout(() => setDoneId(null), 3000)
   }
@@ -1918,7 +1946,7 @@ function ModelChannel({ title, desc, icon: Icon, providers, provider, setProvide
   )
 }
 
-function SettingsModal({ onClose, onResetAccess }: any) { 
+function SettingsModal({ onClose, onResetAccess, auth }: any) { 
   const [visionProvider, setVisionProvider] = useArtifactState('ai_vision_provider', 'gemini')
   const [visionModel, setVisionModel] = useArtifactState('ai_vision_model', 'gemini-2.5-flash')
   const [textProvider, setTextProvider] = useArtifactState('ai_text_provider', 'deepseek')
@@ -1932,6 +1960,15 @@ function SettingsModal({ onClose, onResetAccess }: any) {
   const [prompts, setPrompts] = useState<Record<string, string>>(loadPrompts)
   const fileRef = useRef<HTMLInputElement>(null)
   const setPrompt = (id: string, v: string) => { savePrompt(id, v); setPrompts(p => ({ ...p, [id]: v })) }
+  const [reauth, setReauth] = useState(false)
+  const [reauthPw, setReauthPw] = useState('')
+  const [reauthErr, setReauthErr] = useState('')
+  const confirmReset = () => {
+    if (!auth) { onResetAccess(); onClose(); return }
+    if (hashPassword(reauthPw, auth.salt) !== auth.hash) { setReauthErr('Неверный текущий пароль'); return }
+    onResetAccess()
+    onClose()
+  }
   const resetPrompt = (id: string) => { resetPrompts(id); setPrompts(p => { const n = { ...p }; delete n[id]; return n }) }
   const resetAllPrompts = () => { resetPrompts(); setPrompts(loadPrompts()) }
   const onImport = async ({ target }: { target: HTMLInputElement }) => {
@@ -2066,10 +2103,24 @@ function SettingsModal({ onClose, onResetAccess }: any) {
               <button className="btn sm" onClick={() => fileRef.current?.click()}><Upload size={15} /> Загрузить из файла</button>
               <p className="tx-cat" style={{ textAlign: 'center' }}>Так можно перенести данные на другой телефон</p>
             </div>
-            <button className="btn danger" style={{ marginTop: 8, background: 'transparent' }} onClick={() => { onResetAccess(); onClose() }}><KeyRound size={16} /> Сменить пароль / сбросить доступ</button>
+            <button className="btn danger" style={{ marginTop: 8, background: 'transparent' }} onClick={() => setReauth(true)}><KeyRound size={16} /> Сменить пароль / сбросить доступ (требует текущий пароль)</button>
           </div>
         </div>
 
+        {reauth && (
+          <div className="overlay" onClick={() => setReauth(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="sheet-head"><h3>Смена пароля / сброс доступа</h3><button className="icon-btn" onClick={() => setReauth(false)}><X size={18} /></button></div>
+              <p className="tx-cat">Пароль защищает доступ только в этом браузере на этом устройстве. Это не аккаунт и не синхронизация. Сброс сотрёт пароль блокировки (данные останутся).</p>
+              <input className="text-input" type="password" value={reauthPw} onChange={e => setReauthPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && confirmReset()} placeholder="Текущий пароль" />
+              {reauthErr && <p className="lock-err">{reauthErr}</p>}
+              <div className="bad-actions" style={{ marginTop: 10 }}>
+                <button className="btn danger" onClick={confirmReset}>Сбросить доступ</button>
+                <button className="btn sm" onClick={() => setReauth(false)}>Отмена</button>
+              </div>
+            </div>
+          </div>
+        )}
         <button className="btn primary full save-btn" onClick={save}>
           {saved ? <><Check size={16} /> Сохранено</> : <><KeyRound size={16} /> Сохранить настройки</>}
         </button>
@@ -2110,7 +2161,7 @@ const pdfToText = async (buf: ArrayBuffer) => {
   return out
 }
 
-function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food' | 'bank', onClose: () => void, onAdd?: (v: Record<string, string>) => void, onAddBank?: (items: { name: string; amount: number; cat: string; date: string }[]) => void }) {
+function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'receipt' | 'food' | 'bank', onClose: () => void, onAdd?: (v: Record<string, string>) => void, onAddBank?: (items: { name: string; amount: number; cat: string; date: string }[]) => void, onOpenSettings?: () => void }) {
   const [step, setStep] = useState<'capture' | 'analyzing' | 'result' | 'error'>('capture')
   const [err, setErr] = useState('')
   const [real, setReal] = useState(false)
@@ -2281,6 +2332,7 @@ function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food'
           <Loader2 size={34} className="spin" />
           <p className="scan-title">ИИ распознаёт…</p>
           <p className="scan-hint">{isReceipt ? 'Читаю текст и определяю категории' : isBank ? 'Читаю операции и раскладываю по категориям' : 'Оцениваю состав и калорийность'}</p>
+          <button className="btn sm" onClick={() => setStep('capture')} style={{ marginTop: 12 }}>Отмена</button>
         </div>
       )}
 
@@ -2290,6 +2342,7 @@ function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food'
           <p className="scan-title">Не получилось</p>
           <p className="scan-hint">{err}</p>
           <button className="btn primary sm" onClick={() => setStep('capture')}>Попробовать снова</button>
+          <button className="btn sm" onClick={onClose}>Ввести вручную</button>
         </div>
       )}
 
@@ -2371,7 +2424,7 @@ function Scanner({ type, onClose, onAdd, onAddBank }: { type: 'receipt' | 'food'
             </>
           )}
 
-          {!real && <p className="weight-note">Настоящее распознавание заработает, когда подключишь Vision-модель в настройках.</p>}
+          {!real && <div className="scan-real-note"><p>Настоящее распознавание заработает, когда подключишь Vision-модель.</p>{onOpenSettings ? <button className="btn sm" onClick={onOpenSettings}>Открыть настройки ИИ</button> : null}</div>}
           <button className="btn primary full" onClick={onClose}>Готово</button>
         </div>
       )}
@@ -2397,7 +2450,7 @@ const FOOD_RESULT = {
   netG: 135,
 }
 
-function PlanBuilder({ onClose }: { onClose: () => void }) {
+function PlanBuilder({ onClose, onAddTasks }: { onClose: () => void, onAddTasks?: (names: string[]) => void }) {
   const [step, setStep] = useState<'input' | 'generating' | 'result'>('input')
   const [goal, setGoal] = useState('')
   const [timeframe, setTimeframe] = useState('1 месяц')
@@ -2406,6 +2459,7 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
   const [real, setReal] = useState(false)
   const [err, setErr] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [why, setWhy] = useState('')
 
   const generate = async () => {
     if (!goal.trim() || generating) return
@@ -2413,28 +2467,15 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
     setErr('')
     setGenerating(true)
     try {
-      const settings = getAiSettings('text')
-      const prompts = loadPrompts()
-      const promptDef = PROMPTS.find(p => p.id === 'plan')
-      const sys = prompts.plan || (promptDef ? promptDef.text : '')
-      const res = await chatJson<{ weeks: { week: string; tasks: string[] }[] }>(settings, sys, 'Цель: ' + goal + '.\nСрок: ' + timeframe + '.\nСоставь план из 4 недель по 2-4 шага в каждой.')
-      if (res && Array.isArray(res.weeks) && res.weeks.length) {
-        setPlanData(res.weeks.slice(0, 6).map((w, i) => ({ week: w.week || 'Неделя ' + (i + 1), tasks: (w.tasks || []).slice(0, 6) })))
-        setReal(true)
-      } else {
-        throw new Error('Пустой ответ')
-      }
+      const plan = await generatePlan(goal)
+      setPlanData(plan.weeks.slice(0, 6).map((w, i) => ({ week: w.week || 'Неделя ' + (i + 1), tasks: w.tasks.map(t => t.name).slice(0, 6) })))
+      setWhy(whyThisPlan(goal, plan))
+      setReal(true)
       setStep('result')
-    } catch (e) {
-      if (e instanceof AiNotConfigured) {
-        setReal(false)
-        setStep('result')
-      } else {
-        setErr('ИИ не ответил: ' + (e instanceof Error ? e.message : 'ошибка') + '. Показан пример плана.')
-        setPlanData(PLAN)
-        setReal(false)
-        setStep('result')
-      }
+    } catch {
+      setPlanData(PLAN)
+      setReal(false)
+      setStep('result')
     }
     setGenerating(false)
   }
@@ -2448,7 +2489,7 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <motion.div className="overlay center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+    <motion.div className="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
       <motion.div className="modal wide" initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} onClick={e => e.stopPropagation()}>
         <div className="sheet-head">
           <h3>План с ИИ</h3>
@@ -2471,11 +2512,14 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
         )}
 
         {step === 'generating' && (
+          <>
           <div className="scan-zone analyzing">
             <Loader2 size={34} className="spin" />
             <p className="scan-title">ИИ составляет план…</p>
             <p className="scan-hint">Разбиваю «{goal}» на шаги по неделям</p>
           </div>
+          <button className="btn sm" onClick={() => setStep('input')} style={{ marginTop: 12 }}>Отмена</button>
+          </>
         )}
 
         {step === 'result' && (
@@ -2487,6 +2531,7 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
             </div>
             <div className="plan-goal">{goal}</div>
             <div className="plan-meta"><CalendarDays size={14} /> {timeframe} · {planData.length} этапов</div>
+            {why && <div className="why-text"><Sparkles size={13} /> {why}</div>}
             <div className="plan-weeks">
               {planData.map((w, wi) => (
                 <div key={wi} className="plan-week">
@@ -2504,7 +2549,8 @@ function PlanBuilder({ onClose }: { onClose: () => void }) {
                 </div>
               ))}
             </div>
-            <button className="btn primary full" onClick={onClose}>Готово</button>
+            <button className="btn primary full" onClick={() => { if (onAddTasks) onAddTasks(planData.flatMap(w => w.tasks)); onClose() }}>Добавить задачи в План ({planData.reduce((s, w) => s + w.tasks.length, 0)})</button>
+            <button className="btn full" style={{ width: '100%', marginTop: 8 }} onClick={onClose}>Готово</button>
           </div>
         )}
       </motion.div>
@@ -2623,6 +2669,7 @@ function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
   const [userSecret, setUserSecret] = useState('')
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
+  const [codeTries, setCodeTries] = useState(0)
 
   const effSecret = ownSecret ? userSecret.replace(/\s/g, '').toUpperCase() : secret
   const c = code.replace(/\s/g, '')
@@ -2630,7 +2677,11 @@ function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
 
   const save = () => {
     if (pw.length < 4) { setErr('Пароль должен быть не короче 4 символов'); return }
-    if (wantTotp && !codeOk) { setErr('Введи текущий 6-значный код из Google Authenticator'); return }
+    if (wantTotp && !codeOk) {
+      setCodeTries(c => c + 1)
+      setErr(codeTries >= 4 ? 'Слишком много попыток — подожди 30 секунд и попробуй снова' : 'Введи текущий 6-значный код из Google Authenticator')
+      return
+    }
     const salt = bytesHex(randBytes(8))
     onDone({ hash: hashPassword(pw, salt), salt, totpSecret: wantTotp ? effSecret : undefined })
   }
@@ -2641,16 +2692,16 @@ function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
         <div className="logo" style={{ justifyContent: 'center', paddingBottom: 6 }}>
           <div className="logo-mark"><Sparkles size={18} /></div><span>Life OS</span>
         </div>
-        <h2>Настройка доступа</h2>
-        <p className="lock-hint">Приложение только для тебя. Придумай пароль — он откроет доступ на 7 дней, потом попросит снова. На телефоне при первом входе введи тот же пароль.</p>
+        <h2>Локальная блокировка устройства</h2>
+        <p className="lock-hint">Это не аккаунт и не сервер: пароль хранится только в этом браузере на этом устройстве и защищает твои данные от посторонних глаз. Доступ откроется на 7 дней, затем попросит пароль снова.</p>
 
         <label className="field-label">Пароль</label>
         <input className="text-input" type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Придумай пароль (мин. 4 символа)" />
 
         <div className="track-row" style={{ margin: '6px 0 4px' }}>
           <div className="track-info">
-            <span className="tx-name">Google Authenticator</span>
-            <span className="tx-cat">дополнительный код из приложения</span>
+            <span className="tx-name">Google Authenticator (локальная проверка)</span>
+            <span className="tx-cat">код проверяется прямо в браузере — это НЕ серверная MFA. Секрет лежит локально вместе с данными.</span>
           </div>
           <div className={`toggle ${wantTotp ? 'on' : ''}`} onClick={() => setWantTotp(w => !w)}><span /></div>
         </div>
@@ -2676,7 +2727,7 @@ function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
         )}
 
         {err && <p className="lock-err">{err}</p>}
-        <button className="btn primary full save-btn" data-genui-primary-action onClick={save} disabled={pw.length < 4 || (wantTotp && !codeOk)}>Сохранить доступ</button>
+        <button className="btn primary full save-btn" data-genui-primary-action onClick={save} disabled={pw.length < 4 || (wantTotp && (!codeOk || codeTries >= 5))}>Сохранить доступ</button>
         <p className="tx-cat" style={{ marginTop: 10, textAlign: 'center' }}>Если забудешь пароль — очисти данные сайта в браузере (вместе с данными приложения).</p>
       </div>
     </div>
@@ -2688,12 +2739,23 @@ function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) 
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
   const [days, setDays] = useState(7)
+  const [attempts, setAttempts] = useState(0)
+  const [lockUntil, setLockUntil] = useState(0)
 
   const unlock = () => {
+    if (lockUntil > Date.now()) { setErr('Слишком много попыток — вход временно заблокирован. Подожди ' + Math.ceil((lockUntil - Date.now()) / 60000) + ' мин'); return }
     const c = code.replace(/\s/g, '').toUpperCase()
     if (hashPassword(pw, cfg.salt) === cfg.hash) { onUnlock(days); return }
     if (cfg.totpSecret && c.length === 6 && [0, 1].some(o => totpCode(cfg.totpSecret!, Date.now() - o * 30000) === c)) { onUnlock(days); return }
-    setErr('Неверный пароль или код')
+    const n = attempts + 1
+    setAttempts(n)
+    if (n >= 5) {
+      const wait = Math.min(30000 * Math.pow(2, n - 5), 15 * 60 * 1000)
+      setLockUntil(Date.now() + wait)
+      setErr('Слишком много неверных попыток. Вход заблокирован на ' + Math.ceil(wait / 60000) + ' мин')
+    } else {
+      setErr('Неверный пароль или код. Осталось попыток: ' + (5 - n))
+    }
   }
 
   return (
@@ -2703,7 +2765,7 @@ function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) 
           <div className="logo-mark"><Sparkles size={18} /></div><span>Life OS</span>
         </div>
         <h2>Доступ закрыт</h2>
-        <p className="lock-hint">Введи пароль{cfg.totpSecret ? ' или код из Google Authenticator' : ''}, чтобы открыть приложение.</p>
+        <p className="lock-hint">Введи пароль{cfg.totpSecret ? ' или код из Google Authenticator' : ''}, чтобы открыть приложение. Это локальная блокировка: данные живут только в этом браузере.</p>
 
         <label className="field-label">Пароль</label>
         <input className="text-input" type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && unlock()} placeholder="Твой пароль" />
@@ -2739,7 +2801,7 @@ const QUICK = [
   { label: 'Вес', tab: 'health', icon: HeartPulse, tone: 'blue' },
 ]
 
-function AppContent({ onResetAccess }: any) {
+function AppContent({ onResetAccess, auth }: any) {
   const [theme, setTheme] = useArtifactState('theme', 'dark')
   const [tab, setTab] = useArtifactState('tab', 'dashboard')
   const [quick, setQuick] = useState(false)
@@ -2747,6 +2809,7 @@ function AppContent({ onResetAccess }: any) {
   const [plan, setPlan] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const View = VIEWS[tab] || Dashboard
+  const [onboarded, setOnboarded] = useArtifactState('lifeos_onboarding_done', false)
 
   const addFromScan = (v: Record<string, string>) => {
     const date = todayISO()
@@ -2770,6 +2833,16 @@ function AppContent({ onResetAccess }: any) {
       localStorage.setItem('lifeos:xp', JSON.stringify(xp + added.length * XPS.txAdded))
     } catch { /* ignore */ }
     window.dispatchEvent(new CustomEvent('lifeos-tx-updated'))
+  }
+
+  const addFromPlan = (names: string[]) => {
+    if (!names.length) return
+    try {
+      const prev: Task[] = JSON.parse(localStorage.getItem('lifeos:tasks') || '[]')
+      const added: Task[] = names.map(n => ({ id: Date.now() + Math.random(), name: n, done: false, prio: 'medium' }))
+      localStorage.setItem('lifeos:tasks', JSON.stringify([...added, ...prev]))
+    } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('lifeos-tasks-updated'))
   }
   return (
     <div className={`app ${theme}`}>
@@ -2835,15 +2908,15 @@ function AppContent({ onResetAccess }: any) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {scan && <Scanner type={scan} onClose={() => setScan(null)} onAdd={addFromScan} onAddBank={addFromBank} />}
+        {scan && <Scanner type={scan} onClose={() => setScan(null)} onAdd={addFromScan} onAddBank={addFromBank} onOpenSettings={() => setTab('settings')} />}
       </AnimatePresence>
 
       <AnimatePresence>
-        {plan && <PlanBuilder onClose={() => setPlan(false)} />}
+        {plan && <PlanBuilder onClose={() => setPlan(false)} onAddTasks={addFromPlan} />}
       </AnimatePresence>
 
       <AnimatePresence>
-        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onResetAccess={onResetAccess} />}
+        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onResetAccess={onResetAccess} auth={auth} />}
       </AnimatePresence>
 
       <nav className="bottom-nav">
@@ -2856,6 +2929,30 @@ function AppContent({ onResetAccess }: any) {
           )
         })}
       </nav>
+      {!onboarded && <OnboardingOverlay onDone={() => setOnboarded(true)} />}
+    </div>
+  )
+}
+
+function OnboardingOverlay({ onDone }: { onDone: () => void }) {
+  const [i, setI] = useState(0)
+  const steps = [
+    { icon: '🎯', title: 'Жизнь как игра', text: 'Выполняй задачи, привычки и тренировки — получай XP, уровни и ачивки.' },
+    { icon: '⚔️', title: 'Побеждай боссов', text: 'Каждая выполненная привычка или задача наносит урон боссу. Добей его и получи +50 XP.' },
+    { icon: '🤖', title: 'ИИ помогает', text: 'Чеки, планы и отчёты — ИИ разбирает данные, а подсказки появляются на главной.' },
+  ]
+  return (
+    <div className="onboarding-overlay">
+      <div className="onboarding-card">
+        <div className="onboarding-icon">{steps[i].icon}</div>
+        <h2>{steps[i].title}</h2>
+        <p>{steps[i].text}</p>
+        <div className="onboarding-dots">
+          {steps.map((_, d) => <span key={d} className={`onboarding-dot ${d === i ? 'on' : ''}`} onClick={() => setI(d)} />)}
+        </div>
+        <button className="btn primary full" onClick={() => { if (i < steps.length - 1) setI(i + 1); else onDone() }}>{i < steps.length - 1 ? 'Понятно, дальше' : 'Начать'}</button>
+        <button className="onboarding-later" onClick={onDone}>Позже</button>
+      </div>
     </div>
   )
 }
