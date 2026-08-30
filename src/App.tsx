@@ -2565,9 +2565,9 @@ const PLAN = [
   { week: 'Неделя 4 · Результат', tasks: ['Финальный рывок', 'Подвести итоги', 'Закрепить привычку'] },
 ]
 
-/* ---------- access lock (пароль / Google Authenticator) ---------- */
+/* ---------- access lock (пароль) ---------- */
 
-type AuthCfg = { hash: string; salt: string; totpSecret?: string }
+type AuthCfg = { hash: string; salt: string }
 
 const B32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
@@ -2663,27 +2663,13 @@ function totpCode(secretB32: string, at = Date.now()): string {
 
 function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
   const [pw, setPw] = useState('')
-  const [wantTotp, setWantTotp] = useState(false)
-  const [ownSecret, setOwnSecret] = useState(false)
-  const [secret] = useState(() => base32Encode(randBytes(20)))
-  const [userSecret, setUserSecret] = useState('')
-  const [code, setCode] = useState('')
   const [err, setErr] = useState('')
-  const [codeTries, setCodeTries] = useState(0)
 
-  const effSecret = ownSecret ? userSecret.replace(/\s/g, '').toUpperCase() : secret
-  const c = code.replace(/\s/g, '')
-  const codeOk = effSecret.length >= 16 && /^[A-Z2-7]+$/.test(effSecret) && c.length === 6 && [0, 1].some(o => totpCode(effSecret, Date.now() - o * 30000) === c)
 
   const save = () => {
     if (pw.length < 4) { setErr('Пароль должен быть не короче 4 символов'); return }
-    if (wantTotp && !codeOk) {
-      setCodeTries(c => c + 1)
-      setErr(codeTries >= 4 ? 'Слишком много попыток — подожди 30 секунд и попробуй снова' : 'Введи текущий 6-значный код из Google Authenticator')
-      return
-    }
     const salt = bytesHex(randBytes(8))
-    onDone({ hash: hashPassword(pw, salt), salt, totpSecret: wantTotp ? effSecret : undefined })
+    onDone({ hash: hashPassword(pw, salt), salt })
   }
 
   return (
@@ -2698,36 +2684,8 @@ function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
         <label className="field-label">Пароль</label>
         <input className="text-input" type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Придумай пароль (мин. 4 символа)" />
 
-        <div className="track-row" style={{ margin: '6px 0 4px' }}>
-          <div className="track-info">
-            <span className="tx-name">Google Authenticator (локальная проверка)</span>
-            <span className="tx-cat">код проверяется прямо в браузере — это НЕ серверная MFA. Секрет лежит локально вместе с данными.</span>
-          </div>
-          <div className={`toggle ${wantTotp ? 'on' : ''}`} onClick={() => setWantTotp(w => !w)}><span /></div>
-        </div>
-
-        {wantTotp && (
-          <div className="totp-setup">
-            <div className="timeframe" style={{ marginBottom: 10 }}>
-              <button className={`chip click ${!ownSecret ? 'sel' : ''}`} onClick={() => setOwnSecret(false)}>Новый секрет</button>
-              <button className={`chip click ${ownSecret ? 'sel' : ''}`} onClick={() => setOwnSecret(true)}>Ввести свой</button>
-            </div>
-            {ownSecret ? (
-              <input className="text-input" value={userSecret} onChange={e => setUserSecret(e.target.value)} placeholder="Вставь секрет (Base32)" />
-            ) : (
-              <>
-                <div className="secret-box">{(secret.match(/.{1,4}/g) || []).join(' ')}</div>
-                <p className="tx-cat">Добавь секрет в Google Authenticator: «+» → «Ввести ключ настройки» — затем введи текущий код ниже.</p>
-              </>
-            )}
-            <label className="field-label">Код из Authenticator (для проверки)</label>
-            <input className="text-input" inputMode="numeric" value={code} onChange={e => setCode(e.target.value)} placeholder="6 цифр" />
-            {effSecret.length >= 16 && c.length === 6 && !codeOk && <p className="lock-err">Код не совпадает — проверь и попробуй ещё раз</p>}
-          </div>
-        )}
-
         {err && <p className="lock-err">{err}</p>}
-        <button className="btn primary full save-btn" data-genui-primary-action onClick={save} disabled={pw.length < 4 || (wantTotp && (!codeOk || codeTries >= 5))}>Сохранить доступ</button>
+        <button className="btn primary full save-btn" data-genui-primary-action onClick={save} disabled={pw.length < 4}>Сохранить доступ</button>
         <p className="tx-cat" style={{ marginTop: 10, textAlign: 'center' }}>Если забудешь пароль — очисти данные сайта в браузере (вместе с данными приложения).</p>
       </div>
     </div>
@@ -2736,7 +2694,6 @@ function AccessSetup({ onDone }: { onDone: (cfg: AuthCfg) => void }) {
 
 function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) => void }) {
   const [pw, setPw] = useState('')
-  const [code, setCode] = useState('')
   const [err, setErr] = useState('')
   const [days, setDays] = useState(7)
   const [attempts, setAttempts] = useState(0)
@@ -2744,9 +2701,7 @@ function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) 
 
   const unlock = () => {
     if (lockUntil > Date.now()) { setErr('Слишком много попыток — вход временно заблокирован. Подожди ' + Math.ceil((lockUntil - Date.now()) / 60000) + ' мин'); return }
-    const c = code.replace(/\s/g, '').toUpperCase()
     if (hashPassword(pw, cfg.salt) === cfg.hash) { onUnlock(days); return }
-    if (cfg.totpSecret && c.length === 6 && [0, 1].some(o => totpCode(cfg.totpSecret!, Date.now() - o * 30000) === c)) { onUnlock(days); return }
     const n = attempts + 1
     setAttempts(n)
     if (n >= 5) {
@@ -2754,7 +2709,7 @@ function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) 
       setLockUntil(Date.now() + wait)
       setErr('Слишком много неверных попыток. Вход заблокирован на ' + Math.ceil(wait / 60000) + ' мин')
     } else {
-      setErr('Неверный пароль или код. Осталось попыток: ' + (5 - n))
+      setErr('Неверный пароль. Осталось попыток: ' + (5 - n))
     }
   }
 
@@ -2765,17 +2720,10 @@ function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) 
           <div className="logo-mark"><Sparkles size={18} /></div><span>Life OS</span>
         </div>
         <h2>Доступ закрыт</h2>
-        <p className="lock-hint">Введи пароль{cfg.totpSecret ? ' или код из Google Authenticator' : ''}, чтобы открыть приложение. Это локальная блокировка: данные живут только в этом браузере.</p>
+        <p className="lock-hint">Введи пароль, чтобы открыть приложение. Это локальная блокировка: данные живут только в этом браузере.</p>
 
         <label className="field-label">Пароль</label>
         <input className="text-input" type="password" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && unlock()} placeholder="Твой пароль" />
-
-        {cfg.totpSecret && (
-          <>
-            <label className="field-label">Код из Authenticator</label>
-            <input className="text-input" inputMode="numeric" value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === 'Enter' && unlock()} placeholder="6 цифр" />
-          </>
-        )}
 
         <div className="timeframe" style={{ margin: '12px 0 4px' }}>
           {[{ d: 1, l: '1 день' }, { d: 7, l: '7 дней' }, { d: 30, l: '30 дней' }].map(o => (
