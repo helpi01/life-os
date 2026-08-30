@@ -4,7 +4,7 @@ import { useArtifactState } from './dsh-sdk-shim'
 import {
   LayoutDashboard, Wallet, Dumbbell, Repeat, HeartPulse, Utensils, Sparkles,
   Sun, Moon, Plus, X, TrendingUp, Flame,
-  Droplet, BookOpen, Ban, Activity, ArrowUpRight, ArrowDownRight, Brain,
+  Droplet, BookOpen, Ban, Activity, ArrowUpRight, ArrowDownRight, Brain, Swords, Timer, Zap,
   Droplets, BedDouble, Footprints, Shield, ChevronLeft, ChevronRight, Pencil,
   Camera, ScanLine, Loader2, CheckCircle2, ImagePlus, ListTodo, Target, CalendarDays,
   Settings, Crown, Flag, KeyRound, Eye, EyeOff, Check,
@@ -22,6 +22,7 @@ import { CATEGORIES, MEALS, TYPES, HABIT_META } from './data'
 import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
 import { levelFor, XPS, ACHIEVEMENTS } from './gamification'
 import type { Stats } from './gamification'
+import { xpGain, XP_CAPS } from './xp'
 import { addCount, countOn, last7Dates, dayLabel, daysAgoISO, BAD_XP } from './badHabits'
 import type { BadHabit, BadLog } from './badHabits'
 import { categorySpends } from './budgets'
@@ -38,6 +39,7 @@ const NAV = [
   { id: 'plans', label: 'Планы', icon: ListTodo },
   { id: 'health', label: 'Здоровье', icon: HeartPulse },
   { id: 'food', label: 'Питание', icon: Utensils },
+  { id: 'focus', label: 'Фокус', icon: Timer },
   { id: 'ai', label: 'ИИ', icon: Sparkles },
 ]
 
@@ -190,9 +192,11 @@ const INSIGHTS = [
   'Подключи ИИ в настройках — тогда он начнёт анализировать расходы, питание и тренировки.',
 ]
 
-const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: CalendarDays, activity: Activity, dumbbell: Dumbbell, book: BookOpen, crown: Crown, star: Star, droplets: Droplets, bed: BedDouble, footprints: Footprints, shield: Shield, utensils: Utensils }
+const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: CalendarDays, activity: Activity, dumbbell: Dumbbell, book: BookOpen, crown: Crown, star: Star, droplets: Droplets, bed: BedDouble, footprints: Footprints, shield: Shield, utensils: Utensils, swords: Swords }
 
 type SleepEntry = { id: number; date: string; bed: number; woke: number }
+type Boss = { id: number; name: string; hp: number; maxHp: number; done: boolean }
+type FocusEntry = { id: number; date: string; mins: number; task: string }
 
 function Ring({ pct, size = 64, stroke = 7, color = '#8b5cf6', children }: { pct: number; size?: number; stroke?: number; color?: string; children?: any }) {
   const r = (size - stroke) / 2
@@ -215,9 +219,17 @@ function Dashboard() {
   const [workouts] = useArtifactState('lifeos_workouts', [] as Workout[])
   const [habits] = useArtifactState('lifeos_habits', [] as Habit[])
   const [quests, setQuests] = useArtifactState('lifeos_quests', [] as Quest[])
-  const [tasks] = useArtifactState('lifeos_tasks', [] as Task[])
+  const [tasks, setTasks] = useArtifactState('lifeos_tasks', [] as Task[])
   const [xp, setXp] = useArtifactState('lifeos_xp', 0)
   const [addQ, setAddQ] = useState(false)
+  const [bosses, setBosses] = useArtifactState('lifeos_bosses', [] as Boss[])
+  const [bossAdd, setBossAdd] = useState(false)
+  const [morning, setMorning] = useArtifactState('lifeos_morning', { d: '', e: 0 })
+  const [evening, setEvening] = useArtifactState('lifeos_evening', { d: '', note: '' })
+  const [eveningNote, setEveningNote] = useState('')
+  const [focusList] = useArtifactState('lifeos_focus', [] as FocusEntry[])
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reportState, setReportState] = useState<{ s: 'idle' | 'loading' | 'done' | 'error'; text?: string }>({ s: 'idle' })
   const [wtr, setWtr] = useArtifactState('lifeos_water', { d: '', ml: 0 })
   const [stepsT, setStepsT] = useArtifactState('lifeos_steps_today', { d: '', v: 0 })
   const [stepsGoal] = useArtifactState('lifeos_steps_goal', 10000)
@@ -250,6 +262,7 @@ function Dashboard() {
     steps10k: Number(counters.steps10k || 0),
     cleanBest: Object.values(JSON.parse(localStorage.getItem('lifeos:bad_streaks') || '{}')).reduce((m: number, v: any) => Math.max(m, Number(v) || 0), 0),
     food: food.length,
+    bosses: bosses.filter(b => b.done).length,
   }
   const sleepToday = sleepLog.find(s => s.date === today)
   const unlocked = ACHIEVEMENTS.filter(a => a.test(stats)).map(a => a.id)
@@ -258,6 +271,87 @@ function Dashboard() {
     setQuests(q => [...q, { id: Date.now(), name: v.name, total: Math.max(1, Number(v.total) || 1) }])
     setXp(x => x + XPS.questCreated)
     setAddQ(false)
+  }
+
+  // ---- Боссы, утро/вечер, характеристики, отчёт за неделю ----
+  const BOSS_HIT = 10
+  const addBoss = (v: Record<string, string>) => {
+    const hp = Math.max(10, Math.round(Number(v.hp) || 100))
+    setBosses(b => [...b, { id: Date.now(), name: v.name, hp, maxHp: hp, done: false }])
+    setBossAdd(false)
+  }
+  const removeBoss = (id: number) => setBosses(b => b.filter(x => x.id !== id))
+  const strikeBoss = (id: number) => {
+    setBosses(bs => bs.map(b => {
+      if (b.id !== id) return b
+      const hp = Math.max(0, b.hp - BOSS_HIT)
+      if (hp <= 0 && !b.done) xpGain(setXp, XPS.bossWin, 'bossWin', 50)
+      return { ...b, hp, done: hp <= 0 }
+    }))
+    xpGain(setXp, XPS.bossStrike, 'bossStrike', 20)
+  }
+  const morningSet = (e: number) => {
+    setMorning({ d: today, e })
+    xpGain(setXp, XPS.morning, 'morning', 6)
+  }
+  const eveningSave = () => {
+    setEvening({ d: today, note: eveningNote.trim() })
+    xpGain(setXp, XPS.evening, 'evening', 6)
+  }
+  const top3 = [...tasks].sort((a, b) => Number(a.done) - Number(b.done)).slice(0, 3)
+  const toggleTask = (id: number) => {
+    const t = tasks.find(x => x.id === id)
+    if (t && !t.done) xpGain(setXp, XPS.taskDone, 'task', XP_CAPS.task)
+    setTasks(ts => ts.map(x => x.id === id ? { ...x, done: !x.done } : x))
+  }
+  const chars = [
+    { name: 'Здоровье', v: Math.min(100, Math.round(10 + workouts.length * 4 + Number(counters.water || 0) * 0.8 + Number(counters.sleepOk || 0) * 5 + Number(counters.steps10k || 0) * 15)) },
+    { name: 'Дисциплина', v: Math.min(100, Math.round(10 + stats.tasksDone * 4 + stats.habitsDone * 2)) },
+    { name: 'Энергия', v: Math.min(100, Math.round(15 + Number(counters.sleepOk || 0) * 6 + Object.keys(moodMark).length * 2)) },
+    { name: 'Фокус', v: Math.min(100, Math.round(5 + focusList.length * 12 + stats.tasksDone)) },
+    { name: 'Финансы', v: Math.min(100, Math.round(5 + Math.min(50, stats.txs) * 1.8 + stats.savedR / 500)) },
+    { name: 'Социальность', v: 5 },
+  ]
+  const buildWeekContext = () => {
+    const s = lastDays(7).map(d => d.iso)
+    const txsW = txs.filter(t => s.includes(t.date) && t.amount < 0)
+    const spent = txsW.reduce((a, t) => a - t.amount, 0)
+    const foodW = food.filter(f => s.includes(f.date))
+    const avgKcal = foodW.length ? Math.round(foodW.reduce((a, f) => a + f.kcal, 0) / Math.max(1, new Set(foodW.map(f => f.date)).size)) : 0
+    const sleepW = sleepLog.filter(x => s.includes(x.date))
+    const avgSleep = sleepW.length ? (sleepW.reduce((a, x) => a + sleepHours(x.bed, x.woke), 0) / sleepW.length).toFixed(1) : '—'
+    const moodDays = s.filter(d => moodMark[d]).length
+    let badShifts = 0
+    try {
+      const bl = JSON.parse(localStorage.getItem('lifeos:bad_logs') || '[]')
+      bl.forEach((r: any) => { if (s.includes(r.date) && r.counts) badShifts += Object.values(r.counts).reduce((a: number, c: any) => a + Math.max(0, Number(c)), 0) })
+    } catch { /* ignore */ }
+    return ['Статистика за последние 7 дней:',
+      `• Задач выполнено: ${tasks.filter(t => t.done).length}`,
+      `• Привычек отмечено сегодня: ${doneHabits} из ${habits.length}`,
+      `• Тренировок: ${workouts.length}, всего ${workouts.reduce((a, w) => a + w.durMin, 0)} мин / ${workouts.reduce((a, w) => a + w.kcal, 0)} ккал`,
+      `• Питание: ${foodW.length} записей, в среднем ~${avgKcal} ккал в день`,
+      `• Расходы за неделю: ${spent} ₽ (${txsW.length} операций)`,
+      `• Сон, среднее: ${avgSleep} ч`,
+      `• Настроение отмечено: ${moodDays} из 7 дней`,
+      `• Срывов вредных привычек: ${badShifts}`,
+      `• Всего XP: ${xp}`,
+    ].join('\n')
+  }
+  const runReport = async () => {
+    setReportState({ s: 'loading' })
+    try {
+      const settings = getAiSettings('text')
+      const sys = loadPrompts()['report'] || (PROMPTS.find(p => p.id === 'report')?.text || '')
+      const reply = await chatCompletion(settings, sys, buildWeekContext())
+      setReportState({ s: 'done', text: reply })
+    } catch (e) {
+      if (e instanceof AiNotConfigured) {
+        setReportState({ s: 'done', text: 'ИИ не настроен — вот факты за неделю:\n\n' + buildWeekContext() })
+      } else {
+        setReportState({ s: 'error', text: 'Не удалось получить отчёт: ' + (e instanceof Error ? e.message : 'ошибка') })
+      }
+    }
   }
 
   return (
@@ -307,7 +401,7 @@ function Dashboard() {
       </div>
 
       <div className="card">
-        <div className="card-head"><h3>Итог дня</h3><span className="chip">сегодня</span></div>
+      <div className="card-head"><h3>Итог дня</h3><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><button className="btn sm" onClick={() => setReportOpen(true)}><Sparkles size={13} /> Отчёт</button><span className="chip">сегодня</span></div></div>
         <div className="day-summary">
           <div className="day-sum-item"><Repeat size={16} /> Привычки: <b>{doneHabits} из {habits.length}</b></div>
           <div className="day-sum-item"><Utensils size={16} /> Калории: <b>{fmt(todayKcal)} ккал</b></div>
@@ -318,6 +412,121 @@ function Dashboard() {
           <div className="day-sum-item"><Sparkles size={16} /> Настроение: <b>{moodMark[today] ? ['😐', '🙂', '😄', '😊', '😌'][moodMark[today] - 1] : '—'}</b></div>
         </div>
       </div>
+
+      {/* Утро: короткий вопрос о состоянии */}
+      {morning.d !== today && (
+        <div className="card morning-card">
+          <div className="card-head"><h3>Доброе утро ☀️</h3><span className="chip">1 из 3</span></div>
+          <p className="sub" style={{ marginTop: 0 }}>Как ты себя чувствуешь сегодня?</p>
+          <div className="mood-row">
+            {[['😴', 1], ['🙂', 2], ['🔥', 3]].map(([e, v]) => (
+              <div key={v} className="mood" onClick={() => morningSet(v as number)}>
+                <span className="mood-emoji">{e}</span><span>{v === 1 ? 'слабость' : v === 2 ? 'норм' : 'отлично'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Главные действия сегодня: топ-3 невыполненных задач */}
+      {morning.d === today && top3.length > 0 && (
+        <div className="card">
+          <div className="card-head"><h3>Главные действия сегодня</h3><span className="chip">{top3.filter(t => t.done).length} из {top3.length}</span></div>
+          <div className="task-list">
+            {top3.map(t => (
+              <div key={t.id} className={`task ${t.done ? 'done' : ''}`}>
+                <div className={`task-check ${t.done ? 'on' : ''}`} onClick={() => toggleTask(t.id)}>{t.done && <CheckCircle2 size={16} />}</div>
+                <div className="task-body"><span className="tx-name">{t.name}</span></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Вечерний итог */}
+      {morning.d === today && evening.d !== today && (
+        <div className="card">
+          <div className="card-head"><h3>Вечерний итог 🌙</h3><span className="chip">рефлексия</span></div>
+          <textarea className="text-input" rows={2} value={eveningNote} onChange={e => setEveningNote(e.target.value)} placeholder="Что сегодня сорвалось и почему? Что сделать завтра?" />
+          <button className="btn primary sm" onClick={eveningSave} style={{ marginTop: 8 }}>Завершить день (+{XPS.evening} XP)</button>
+        </div>
+      )}
+
+      {/* Боссы */}
+      <div className="card">
+        <div className="card-head"><h3>Боссы</h3><button className="btn primary sm" onClick={() => setBossAdd(true)}>+ Босс</button></div>
+        {bosses.filter(b => !b.done).length === 0 ? (
+          <Empty text="Создай босса — большую цель, которую надо одолеть: «Форма», «Финансовый хаос», «Сессия»…" action={<button className="btn primary sm" onClick={() => setBossAdd(true)}>+ Создать босса</button>} />
+        ) : (
+          <div className="boss-list">
+            {bosses.filter(b => !b.done).map(b => (
+              <div key={b.id} className={`boss ${b.hp <= 0 ? 'dead' : ''}`}>
+                <div className="boss-head">
+                  <span className="boss-name"><Swords size={15} /> {b.name}</span>
+                  <span className="tx-cat">HP {Math.max(0, b.hp)} / {b.maxHp}</span>
+                </div>
+                <div className="boss-hp"><div style={{ width: Math.max(0, Math.min(100, (b.hp / b.maxHp) * 100)) + '%' }} /></div>
+                {b.hp > 0 ? (
+                  <div className="bad-actions" style={{ marginTop: 8 }}>
+                    <button className="btn sm" onClick={() => strikeBoss(b.id)}>⚔️ Вклад (−{BOSS_HIT} HP, +{XPS.bossStrike} XP)</button>
+                    <button className="icon-btn" onClick={() => removeBoss(b.id)} title="Удалить босса"><Trash2 size={14} /></button>
+                  </div>
+                ) : (
+                  <span className="tx-cat">🏆 Победа! +{XPS.bossWin} XP</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {bosses.filter(b => b.done).length > 0 && (
+          <div className="eat-chips" style={{ marginTop: 8 }}>
+            {bosses.filter(b => b.done).map(b => <span key={b.id} className="chip">🏆 {b.name}</span>)}
+          </div>
+        )}
+      </div>
+
+      {/* Характеристики */}
+      <div className="card">
+        <div className="card-head"><h3>Характеристики</h3><span className="chip">растут от действий</span></div>
+        <div className="chars">
+          {chars.map(c => (
+            <div key={c.name} className="char-row">
+              <span className="char-name">{c.name}</span>
+              <div className="char-bar"><div style={{ width: c.v + '%' }} /></div>
+              <b className="char-val">{c.v}</b>
+            </div>
+          ))}
+        </div>
+        <p className="weight-note">Появляются из твоей статистики: спорт, сон, задачи, расходы. Социальность вырастет с добавлением друзей.</p>
+      </div>
+
+      {bossAdd && (
+        <EntryModal
+          title="Новый босс"
+          fields={[
+            { key: 'name', label: 'Кого побеждаем?', placeholder: 'Форма / Финансовый хаос / Сессия…' },
+            { key: 'hp', label: 'Сколько HP у босса?', type: 'number', placeholder: '100' },
+          ]}
+          submitLabel="Создать босса"
+          onSubmit={addBoss}
+          onClose={() => setBossAdd(false)}
+        />
+      )}
+
+      {/* Недельный отчёт ИИ */}
+      {reportOpen && (
+        <div className="overlay center" onClick={() => setReportOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="sheet-head"><h3>Отчёт за неделю</h3><button className="icon-btn" onClick={() => setReportOpen(false)}><X size={18} /></button></div>
+            <div className="field-stack">
+              {reportState.s === 'idle' && <><p className="tx-cat">ИИ проанализирует задачи, привычки, сон, расходы и еду за 7 дней и предложит, что скорректировать.</p><button className="btn primary full" onClick={runReport}>Сформировать отчёт</button></>}
+              {reportState.s === 'loading' && <div className="report-loading"><span className="tx-cat">Анализирую неделю…</span></div>}
+              {reportState.s === 'done' && <div className="report-text">{reportState.text}</div>}
+              {reportState.s === 'error' && <><p className="tx-cat">{reportState.text}</p><button className="btn primary full" onClick={runReport}>Повторить</button></>}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid-2">
         <div className="card">
@@ -793,7 +1002,7 @@ function Sport() {
   const dayWorkouts = workouts.filter(w => w.date === day)
   const addWorkout = (v: Record<string, string>) => {
     setWorkouts(w => [{ id: Date.now(), name: v.name, date: todayISO(), durMin: Number(v.durMin), kcal: Number(v.kcal) }, ...w])
-    setXp(x => x + XPS.workoutAdded)
+    xpGain(setXp, XPS.workoutAdded, 'workout', XP_CAPS.workout)
     setAdding(false)
   }
 
@@ -886,7 +1095,7 @@ function Habits() {
   const toggle = (id: number) => {
     const h = habits.find(x => x.id === id)
     if (h && !h.done) setXp(x => x + XPS.habitDone)
-    setHabits(hs => hs.map(x => x.id === id ? { ...x, done: !x.done, streak: x.done ? x.streak : x.streak + 1 } : x))
+    if (h && !h.done) xpGain(setXp, XPS.habitDone, 'habit', XP_CAPS.habit)
   }
 
   const addBad = (v: Record<string, string>) => {
@@ -1032,7 +1241,7 @@ function Plans({ onPlan }: any) {
   }
   const toggle = (id: number) => {
     const t = tasks.find(x => x.id === id)
-    if (t && !t.done) setXp(x => x + XPS.taskDone)
+    if (t && !t.done) xpGain(setXp, XPS.taskDone, 'task', XP_CAPS.task)
     setTasks(ts => ts.map(x => x.id === id ? { ...x, done: !x.done } : x))
   }
 
@@ -1368,6 +1577,93 @@ function Health() {
   )
 }
 
+function Focus() {
+  const [focusList, setFocusList] = useArtifactState('lifeos_focus', [] as FocusEntry[])
+  const [xp, setXp] = useArtifactState('lifeos_xp', 0)
+  const [mins, setMins] = useState(25)
+  const [left, setLeft] = useState(25 * 60)
+  const [run, setRun] = useState(false)
+  const [task, setTask] = useState('')
+  const [doneId, setDoneId] = useState<number | null>(null)
+  const doneRef = useRef(false)
+
+  useEffect(() => {
+    if (!run) return
+    const t = setInterval(() => {
+      setLeft(s => {
+        if (s <= 1) {
+          clearInterval(t)
+          setRun(false)
+          if (!doneRef.current) { doneRef.current = true; finish() }
+          return 0
+        }
+        return s - 1
+      })
+    }, 1000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run])
+
+  const pick = (m: number) => { setMins(m); setLeft(m * 60); setRun(false); doneRef.current = false }
+
+  const finish = () => {
+    const d = todayISO()
+    setFocusList(l => [{ id: Date.now(), date: d, mins, task: task.trim() }, ...l])
+    xpGain(setXp, XPS.focus, 'focus', 40)
+    setDoneId(Date.now())
+    setTimeout(() => setDoneId(null), 3000)
+  }
+
+  const todayMins = focusList.filter(f => f.date === todayISO()).reduce((s, f) => s + f.mins, 0)
+  const weekMins = focusList.filter(f => diffDays(f.date) < 7).reduce((s, f) => s + f.mins, 0)
+
+  return (
+    <div className="view">
+      <h1>Фокус</h1>
+      <p className="sub">Глубокая работа без отвлечений</p>
+      <div className="grid-3">
+        <StatCard icon={Timer} label="Сегодня" value={fmt(todayMins) + ' мин'} sub="в фокусе" tone="violet" />
+        <StatCard icon={Activity} label="Неделя" value={fmt(weekMins) + ' мин'} sub="всего" tone="green" />
+        <StatCard icon={Sparkles} label="Сессий" value={String(focusList.length)} sub="всего" tone="orange" />
+      </div>
+      <div className="card focus-card">
+        <div className="eat-chips" style={{ justifyContent: 'center', marginBottom: 14 }}>
+          {[15, 25, 45, 60].map(m => <button key={m} className={`chip click ${mins === m && !run ? 'on' : ''}`} onClick={() => pick(m)}>{m} мин</button>)}
+        </div>
+        <div className="focus-timer">
+          <Ring pct={run ? ((mins * 60 - left) / (mins * 60)) * 100 : 0} size={150} stroke={10} color="#8b5cf6">
+            <strong style={{ fontSize: 30 }}>{Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</strong>
+            <span className="tx-cat">{run ? 'идёт' : 'готов'}</span>
+          </Ring>
+          {doneId && <div className="focus-done">Сессия завершена! +{XPS.focus} XP</div>}
+        </div>
+        <input className="text-input" value={task} onChange={e => setTask(e.target.value)} placeholder="Одна задача фокуса (необязательно)" style={{ marginTop: 14 }} />
+        <div className="focus-actions">
+          {run ? <button className="btn danger sm" onClick={() => { setRun(false); doneRef.current = false }}>Пауза</button> : <button className="btn primary" onClick={() => { setRun(true); setDoneId(null) }}>{left < mins * 60 ? 'Продолжить' : 'Начать'} (+{XPS.focus} XP)</button>}
+          <button className="btn sm" onClick={() => pick(mins)}>Сброс</button>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-head"><h3>История фокуса</h3><span className="chip">7 дней</span></div>
+        {focusList.length === 0 ? (
+          <Empty text="Заверши первую фокус-сессию — история появится здесь" />
+        ) : (
+          <div className="tx-list">
+            {focusList.slice(0, 14).map(f => (
+              <div key={f.id} className="tx">
+                <div className="tx-icon" style={{ background: '#8b5cf622', color: '#8b5cf6' }}><Timer size={16} /></div>
+                <div className="tx-body"><span className="tx-name">{f.task || 'Фокус-сессия'}</span><span className="tx-cat">{fmtDate(f.date)}</span></div>
+                <span className="tx-amount">{f.mins} мин</span>
+                <button className="icon-btn row-del" onClick={() => setFocusList(l => l.filter(x => x.id !== f.id))}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Food({ onScan }: any) {
   const [food, setFood] = useArtifactState('lifeos_food', [] as FoodEntry[])
   const [adding, setAdding] = useState(false)
@@ -1392,7 +1688,7 @@ function Food({ onScan }: any) {
 
   const addFood = (v: Record<string, string>) => {
     setFood(f => [{ id: Date.now(), name: v.name, meal: v.meal, kcal: Number(v.kcal), date: today }, ...f])
-    setXp(x => x + XPS.foodLogged)
+    xpGain(setXp, XPS.foodLogged, 'food', XP_CAPS.food)
     setAdding(false)
   }
 
@@ -2434,7 +2730,7 @@ function AccessLock({ cfg, onUnlock }: { cfg: AuthCfg; onUnlock: (days: number) 
 
 /* ---------- app shell ---------- */
 
-const VIEWS: Record<string, any> = { dashboard: Dashboard, finance: Finance, invest: Investments, sport: Sport, habits: Habits, plans: Plans, health: Health, food: Food, ai: AI }
+const VIEWS: Record<string, any> = { dashboard: Dashboard, finance: Finance, invest: Investments, sport: Sport, habits: Habits, plans: Plans, health: Health, food: Food, focus: Focus, ai: AI }
 
 const QUICK = [
   { label: 'Расход', tab: 'finance', icon: Wallet, tone: 'violet' },

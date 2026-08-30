@@ -12,6 +12,7 @@ export type Stats = {
   steps10k: number;
   cleanBest: number;
   food: number;
+  bosses: number;
 };
 
 export const LEVELS: { level: number; name: string; xpFrom: number }[] = [
@@ -60,7 +61,7 @@ export function levelFor(xp: number): {
 }
 
 export const XPS: Record<
-  'taskDone' | 'habitDone' | 'workoutAdded' | 'foodLogged' | 'questCreated' | 'txAdded' | 'smokeSaved' | 'smokeBad' | 'cleanDay' | 'water' | 'sleepOk' | 'stepsDay' | 'mood',
+  'taskDone' | 'habitDone' | 'workoutAdded' | 'foodLogged' | 'questCreated' | 'txAdded' | 'smokeSaved' | 'smokeBad' | 'cleanDay' | 'water' | 'sleepOk' | 'stepsDay' | 'mood' | 'focus' | 'bossStrike' | 'bossWin' | 'morning' | 'evening',
   number
 > = {
   taskDone: 15,
@@ -76,12 +77,17 @@ export const XPS: Record<
   sleepOk: 15,
   stepsDay: 5,
   mood: 2,
+  focus: 10,
+  bossStrike: 2,
+  bossWin: 50,
+  morning: 3,
+  evening: 3,
 };
 
 export type AchievementDef = {
   id: string;
   name: string;
-  icon: 'flame' | 'wallet' | 'calendar' | 'activity' | 'dumbbell' | 'book' | 'crown' | 'star' | 'droplets' | 'bed' | 'footprints' | 'shield' | 'utensils';
+  icon: 'flame' | 'wallet' | 'calendar' | 'activity' | 'dumbbell' | 'book' | 'crown' | 'star' | 'droplets' | 'bed' | 'footprints' | 'shield' | 'utensils' | 'swords';
   hint: string;
   test: (stats: Stats) => boolean;
 };
@@ -177,5 +183,12 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     icon: 'utensils',
     hint: 'Запиши еду 30 раз',
     test: (stats) => stats.food >= 30,
+  },
+  {
+    id: 'boss-1',
+    name: 'Первый босс побеждён',
+    icon: 'swords',
+    hint: 'Одолей босса на главном экране: сбей его HP до нуля',
+    test: (stats) => stats.bosses >= 1,
   },
 ];

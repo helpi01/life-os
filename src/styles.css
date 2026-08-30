@@ -553,3 +553,41 @@ img { max-width: 100%; }
 }
 .track-ring { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
 .track-ring-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+/* ---- Боссы ---- */
+.boss-list { display: flex; flex-direction: column; gap: 10px; }
+.boss { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: var(--bg); }
+.boss-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.boss-name { font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.boss-hp { height: 10px; border-radius: 999px; background: var(--ring-bg); overflow: hidden; }
+.boss-hp > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #f43f5e, #f59e0b); transition: width 0.3s ease; }
+.boss.dead { border-color: rgba(34, 197, 94, 0.4); }
+.boss.dead .boss-hp > div { background: linear-gradient(90deg, #22c55e, #4ade80); }
+
+/* ---- Характеристики ---- */
+.chars { display: flex; flex-direction: column; gap: 10px; }
+.char-row { display: flex; align-items: center; gap: 10px; }
+.char-name { width: 96px; flex-shrink: 0; font-size: 14px; }
+.char-bar { flex: 1; height: 10px; border-radius: 999px; background: var(--ring-bg); overflow: hidden; }
+.char-bar > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width 0.4s ease; }
+.char-val { width: 28px; text-align: right; font-size: 14px; font-weight: 600; }
+
+/* ---- Фокус ---- */
+.focus-card { text-align: center; }
+.focus-timer { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.focus-actions { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
+.focus-done { margin-top: 8px; padding: 8px 16px; border-radius: 999px; background: rgba(34, 197, 94, 0.15); color: #22c55e; font-size: 13px; font-weight: 600; }
+
+/* ---- Утро / вечер ---- */
+.morning-card { border-color: rgba(139, 92, 246, 0.35); }
+.chip.click.on { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+
+/* ---- Отчёт ---- */
+.report-text { white-space: pre-wrap; line-height: 1.55; font-size: 14px; max-height: 46vh; overflow-y: auto; padding: 10px 0; }
+.report-loading { padding: 18px 0; text-align: center; }
+
+/* ---- Маленькие экраны: характеристики и боссы не разваливаются ---- */
+@media (max-width: 380px) {
+  .char-name { width: 84px; }
+  .boss-name { font-size: 14px; }
+}
