@@ -66,21 +66,26 @@ export function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 export async function chatCompletion(settings: AiSettings, system: string, user: string): Promise<string> {
-  const res = await fetch(settings.baseUrl + '/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + settings.apiKey,
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.3,
-    }),
-  })
+  let res: Response
+  try {
+    res = await fetch(settings.baseUrl + '/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + settings.apiKey,
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+        temperature: 0.3,
+      }),
+    })
+  } catch {
+    throw new Error('Не удалось подключиться к серверу ИИ — проверь Base URL и интернет')
+  }
 
   if (!res.ok) {
     let detail = ''
@@ -110,26 +115,32 @@ export async function chatVision(
   user: string,
   imageDataUrl: string,
 ): Promise<string> {
-  const res = await fetch(settings.baseUrl + '/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + settings.apiKey,
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      messages: [
-        { role: 'system', content: system },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: user },
-            { type: 'image_url', image_url: { url: imageDataUrl } },
-          ],
-        },
-      ],
-      temperature: 0.3,
-    }),
+  let res: Response
+  try {
+    res = await fetch(settings.baseUrl + '/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + settings.apiKey,
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: user },
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+        temperature: 0.3,
+      }),
+    })
+  } catch {
+    throw new Error('Не удалось подключиться к серверу ИИ — проверь Base URL и интернет')
+  }
   })
 
   if (!res.ok) {
