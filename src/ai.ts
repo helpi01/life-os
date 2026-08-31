@@ -64,6 +64,33 @@ export function readFileAsDataUrl(file: File): Promise<string> {
     reader.readAsDataURL(file)
   })
 }
+export function toJpegDataUrl(file: File, maxSide = 1600, quality = 0.9): Promise<string> {
+  const fallback = () => readFileAsDataUrl(file)
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      const ctx = c.getContext('2d')
+      if (!ctx) { URL.revokeObjectURL(url); fallback().then(resolve); return }
+      ctx.drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      try {
+        const out = c.toDataURL('image/jpeg', quality)
+        if (out.length < 100) { fallback().then(resolve); return }
+        resolve(out)
+      } catch { fallback().then(resolve) }
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); fallback().then(resolve) }
+    img.src = url
+  })
+}
+
 
 export async function chatCompletion(settings: AiSettings, system: string, user: string): Promise<string> {
   let res: Response
@@ -94,7 +121,7 @@ export async function chatCompletion(settings: AiSettings, system: string, user:
     } catch {
       detail = ''
     }
-    throw new Error('Агрегатор ответил с ошибкой ' + res.status + ' — проверь ключ и модель в настройках')
+    throw new Error('Агрегатор ответил с ошибкой ' + res.status + (detail ? ': ' + detail.slice(0, 160) : '') + ' — проверь ключ и модель в настройках')
   }
 
   const json = await res.json()
@@ -149,7 +176,7 @@ export async function chatVision(
     } catch {
       detail = ''
     }
-    throw new Error('Агрегатор ответил с ошибкой ' + res.status + ' — проверь ключ и модель в настройках')
+    throw new Error('Агрегатор ответил с ошибкой ' + res.status + (detail ? ': ' + detail.slice(0, 160) : '') + ' — проверь ключ и модель в настройках')
   }
 
   const json = await res.json()

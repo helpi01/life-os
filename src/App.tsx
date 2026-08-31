@@ -19,7 +19,7 @@ import {
   XAxis, YAxis, Tooltip, CartesianGrid, LineChart as RLineChart, Line,
 } from 'recharts'
 import { CATEGORIES, MEALS, TYPES, HABIT_META } from './data'
-import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
+import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl, toJpegDataUrl, AiNotConfigured, PROMPTS, loadPrompts, savePrompt, resetPrompts, extractJson } from './ai'
 import { levelFor, XPS, ACHIEVEMENTS } from './gamification'
 import type { Stats } from './gamification'
 import { generateInsights } from './insights'
@@ -2205,7 +2205,7 @@ function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'r
         analyzeText(await f.text(), f.name)
       } else {
         setPreview(URL.createObjectURL(f))
-        setDataUrl(await readFileAsDataUrl(f))
+        setDataUrl(await toJpegDataUrl(f))
       }
     } catch {
       setErr('Не удалось прочитать файл. Попробуй другой файл или скриншот.')
