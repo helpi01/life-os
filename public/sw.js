@@ -1,6 +1,6 @@
 // Простой сервис-воркер: приложение целиком работает в браузере (localStorage),
 // поэтому после первого открытия оно доступно даже без интернета.
-const CACHE = 'life-os-v2'
+const CACHE = 'life-os-v3'
 
 self.addEventListener('install', (e) => {
   e.waitUntil(

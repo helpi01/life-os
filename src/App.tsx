@@ -296,6 +296,13 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txs, food, workouts, habits, sleepLog, moodMark, tasks])
 
+  useEffect(() => {
+    const h = () => { try { setXp(JSON.parse(localStorage.getItem('lifeos:xp') || '0')) } catch { /* ignore */ } }
+    window.addEventListener('lifeos-xp-updated', h)
+    return () => window.removeEventListener('lifeos-xp-updated', h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const addQuest = (v: Record<string, string>) => {
     setQuests(q => [...q, { id: Date.now(), name: v.name, total: Math.max(1, Number(v.total) || 1) }])
     setXp(x => x + XPS.questCreated)
@@ -2160,6 +2167,10 @@ const pdfToText = async (buf: ArrayBuffer) => {
 
 function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'receipt' | 'food' | 'bank', onClose: () => void, onAdd?: (v: Record<string, string>) => void, onAddBank?: (items: { name: string; amount: number; cat: string; date: string }[]) => void, onOpenSettings?: () => void }) {
   const [step, setStep] = useState<'capture' | 'analyzing' | 'result' | 'error'>('capture')
+  const [preview, setPreview] = useState('')
+  const [dataUrl, setDataUrl] = useState('')
+  const [pickErr, setPickErr] = useState('')
+  const [dragOver, setDragOver] = useState(false)
   const [err, setErr] = useState('')
   const [real, setReal] = useState(false)
   const [items, setItems] = useState(RECEIPT_ITEMS)
@@ -2172,10 +2183,48 @@ function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'r
   const [bankItems, setBankItems] = useState(BANK_ITEMS)
   const [bankCats, setBankCats] = useState<Record<number, string>>({})
   const [bankAdded, setBankAdded] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
   const isReceipt = type === 'receipt'
   const isBank = type === 'bank'
 
+  const resetInput = (el: HTMLInputElement | null) => { if (el) el.value = '' }
+
+  const runFile = async (f: File) => {
+    if (!isBank && !f.type.startsWith('image/')) { setPickErr('Это не изображение. Выбери фото (JPG, PNG, WebP).'); return }
+    if (f.size > (isBank ? 20 * 1024 * 1024 : 15 * 1024 * 1024)) { setPickErr('Файл слишком большой — максимум ' + (isBank ? 20 : 15) + ' МБ.'); return }
+    setPickErr('')
+    try {
+      if (isBank && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) {
+        const text = await pdfToText(await f.arrayBuffer())
+        if (text.trim().length < 30) {
+          setErr('Не удалось извлечь текст из PDF — похоже, это скан. Сделай скриншот выписки или загрузи CSV.')
+          setStep('error')
+          return
+        }
+        analyzeText(text, f.name)
+      } else if (isBank && /\.(txt|csv)$/i.test(f.name)) {
+        analyzeText(await f.text(), f.name)
+      } else {
+        setPreview(URL.createObjectURL(f))
+        setDataUrl(await readFileAsDataUrl(f))
+      }
+    } catch {
+      setErr('Не удалось прочитать файл. Попробуй другой файл или скриншот.')
+      setStep('error')
+    }
+  }
+
+  const onFile = ({ target }: { target: HTMLInputElement }) => {
+    const f = target.files?.[0]
+    resetInput(target)
+    if (f) runFile(f)
+  }
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragOver(false)
+    const f = e.dataTransfer.files?.[0]
+    if (f) runFile(f)
+  }
   const analyze = async (dataUrl: string) => {
     setStep('analyzing')
     try {
@@ -2274,29 +2323,6 @@ function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'r
     }
   }
 
-  const onFile = async ({ target }: { target: HTMLInputElement }) => {
-    const f = target.files?.[0]
-    if (!f) return
-    try {
-      if (isBank && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) {
-        const text = await pdfToText(await f.arrayBuffer())
-        if (text.trim().length < 30) {
-          setErr('Не удалось извлечь текст из PDF — похоже, это скан. Сделай скриншот выписки или загрузи CSV.')
-          setStep('error')
-          return
-        }
-        analyzeText(text, f.name)
-      } else if (isBank && /\.(txt|csv)$/i.test(f.name)) {
-        analyzeText(await f.text(), f.name)
-      } else {
-        analyze(await readFileAsDataUrl(f))
-      }
-    } catch {
-      setErr('Не удалось прочитать файл. Попробуй другой файл или скриншот.')
-      setStep('error')
-    }
-  }
-
   const totalKcal = recFood.per100 ? Math.round(recFood.kcal * g / 100) : Math.round(recFood.kcal * g)
   const addToDiary = () => {
     if (added) return
@@ -2314,22 +2340,39 @@ function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'r
     <div className="overlay" onClick={onClose}>
       <div className="modal scan-modal" onClick={e => e.stopPropagation()}>
       {step === 'capture' && (
-        <div className="scan-zone">
+        <div className="scan-zone capture">
           <button className="icon-btn scan-close" onClick={onClose} aria-label="Закрыть"><X size={18} /></button>
           <div className="scan-icon">{isReceipt ? <ScanLine size={30} /> : isBank ? <Landmark size={30} /> : <Camera size={30} />}</div>
           <p className="scan-title">{isReceipt ? 'Сфотографируйте чек' : isBank ? 'Скриншот банка' : 'Сфотографируйте блюдо'}</p>
-          <p className="scan-hint">ИИ прочитает {isReceipt ? 'позиции и сумму' : isBank ? 'операции и разложит по категориям' : 'калории и БЖУ'} автоматически</p>
-          <input ref={fileRef} type="file" accept={isBank ? 'image/*,.pdf,.txt,.csv' : 'image/*'} capture={isBank ? undefined : 'environment'} style={{ display: 'none' }} onChange={onFile} />
-          <button className="btn primary sm" onClick={() => fileRef.current?.click()}>{isBank ? 'Выбрать фото или файл' : 'Выбрать фото'}</button>
-          <button className="btn sm" onClick={() => { setReal(false); setStep('result') }}>Посмотреть демо-пример</button>
+          <p className="scan-hint">{isReceipt ? 'ИИ прочитает позиции и сумму' : isBank ? 'ИИ разберёт операции по категориям' : 'ИИ посчитает калории, БЖУ и вес'} · фото до 15 МБ</p>
+          {preview ? (
+            <div className="scan-pick">
+              <img src={preview} alt="Выбранное фото" className="scan-preview" />
+              <span className="chip ok">Файл выбран ✓</span>
+              <div className="bad-actions" style={{ justifyContent: 'center' }}>
+                <button className="btn primary sm" onClick={() => dataUrl && analyze(dataUrl)}>Анализировать фото</button>
+                <button className="btn sm" onClick={() => { setPreview(''); setDataUrl(''); setPickErr('') }}>Выбрать другое</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <label className="btn primary sm">Сделать фото<input type="file" accept="image/*" capture="environment" onChange={onFile} className="file-input-hidden" /></label>
+              <label className="btn sm">Выбрать изображение<input type="file" accept={isBank ? 'image/*,.pdf,.txt,.csv' : 'image/*'} onChange={onFile} className="file-input-hidden" /></label>
+              <div className={`dnd-zone ${dragOver ? 'over' : ''}`} onDragOver={e => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}>
+                <ImagePlus size={20} /><span>Перетащи фото сюда (на компьютере)</span>
+              </div>
+            </>
+          )}
+          {pickErr && <p className="lock-err">{pickErr}</p>}
+          <button className="btn sm" onClick={() => { setReal(false); setStep('result') }}>Посмотреть демо-пример (без ИИ)</button>
         </div>
       )}
 
       {step === 'analyzing' && (
         <div className="scan-zone analyzing">
           <Loader2 size={34} className="spin" />
-          <p className="scan-title">ИИ распознаёт…</p>
-          <p className="scan-hint">{isReceipt ? 'Читаю текст и определяю категории' : isBank ? 'Читаю операции и раскладываю по категориям' : 'Оцениваю состав и калорийность'}</p>
+          <p className="scan-title">ИИ анализирует фото…</p>
+          <p className="scan-hint">Загрузка и распознавание · обычно 10–30 секунд</p>
           <button className="btn sm" onClick={() => setStep('capture')} style={{ marginTop: 12 }}>Отмена</button>
         </div>
       )}
@@ -2768,10 +2811,22 @@ function AppContent({ onResetAccess, auth }: any) {
       localStorage.setItem('lifeos:food', JSON.stringify([{ id: Date.now(), name: v.name, meal: v.meal, kcal: Number(v.kcal), date }, ...prev]))
     } catch { /* ignore */ }
     try {
-      const xp = Number(JSON.parse(localStorage.getItem('lifeos:xp') || '0'))
-      localStorage.setItem('lifeos:xp', JSON.stringify(xp + XPS.foodLogged))
+      const today = new Date().toISOString().slice(0, 10)
+      let d: { day: string; counts: Record<string, number> } = { day: '', counts: {} }
+      const raw = localStorage.getItem('lifeos:xp_daily')
+      if (raw) d = JSON.parse(raw)
+      if (!d || d.day !== today) d = { day: today, counts: {} }
+      const used = d.counts.food || 0
+      const grant = Math.max(0, Math.min(XPS.foodLogged, XP_CAPS.food - used))
+      if (grant > 0) {
+        d.counts.food = used + grant
+        localStorage.setItem('lifeos:xp_daily', JSON.stringify(d))
+        const xp = Number(JSON.parse(localStorage.getItem('lifeos:xp') || '0'))
+        localStorage.setItem('lifeos:xp', JSON.stringify(xp + grant))
+      }
     } catch { /* ignore */ }
     window.dispatchEvent(new CustomEvent('lifeos-food-updated'))
+    window.dispatchEvent(new CustomEvent('lifeos-xp-updated'))
   }
 
   const addFromBank = (items: { name: string; amount: number; cat: string; date: string }[]) => {
