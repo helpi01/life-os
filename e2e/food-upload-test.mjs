@@ -180,7 +180,7 @@ if (VKEY) {
     localStorage.setItem('lifeos:ai_vision_provider', '"custom"')
     localStorage.setItem('lifeos:ai_vision_model', '"wormsoft/vision/low"')
     localStorage.setItem('lifeos:ai_text_model', '"wormsoft/agent/low"')
-    localStorage.setItem('lifeos:ai_custom_url', '"https://ai.wormsoft.ru"')
+    localStorage.setItem('lifeos:ai_custom_url', '"https://ai.wormsoft.ru/api/gpt"')
     localStorage.setItem('lifeos:ai_keys', JSON.stringify({ vision: k, text: k }))
   }, VKEY)
   const pv = await ctxV.newPage()
