@@ -2311,7 +2311,8 @@ function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'r
     setBankAdded(true)
   }
   return (
-    <>
+    <div className="overlay" onClick={onClose}>
+      <div className="modal scan-modal" onClick={e => e.stopPropagation()}>
       {step === 'capture' && (
         <div className="scan-zone">
           <button className="icon-btn scan-close" onClick={onClose} aria-label="Закрыть"><X size={18} /></button>
@@ -2425,7 +2426,8 @@ function Scanner({ type, onClose, onAdd, onAddBank, onOpenSettings }: { type: 'r
           <button className="btn primary full" onClick={onClose}>Готово</button>
         </div>
       )}
-    </>
+      </div>
+    </div>
   )
 }
 

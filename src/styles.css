@@ -669,3 +669,5 @@ img { max-width: 100%; }
   .fab { bottom: calc(76px + env(safe-area-inset-bottom)); }
   .hero-ring { display: none; }
 }
+
+.scan-modal { max-height: 88vh; overflow-y: auto; }
