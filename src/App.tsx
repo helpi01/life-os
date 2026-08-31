@@ -23,7 +23,7 @@ import { getAiSettings, chatCompletion, chatVision, chatJson, readFileAsDataUrl,
 import { levelFor, XPS, ACHIEVEMENTS } from './gamification'
 import type { Stats } from './gamification'
 import { generateInsights } from './insights'
-import { generatePlan, whyThisPlan } from './aiPlan'
+import { generatePlan, whyThisPlan, fallbackPlan } from './aiPlan'
 import { xpGain, XP_CAPS } from './xp'
 import { addCount, countOn, last7Dates, dayLabel, daysAgoISO, BAD_XP } from './badHabits'
 import type { BadHabit, BadLog } from './badHabits'
@@ -189,11 +189,8 @@ function EntryModal({ title, fields, submitLabel, initial, onSubmit, onClose }: 
 
 /* ---------- views ---------- */
 
-const INSIGHTS = [
-  'Чем больше записей ты внесёшь, тем точнее будут советы ИИ.',
-  'Подключи ИИ в настройках — тогда он начнёт анализировать расходы, питание и тренировки.',
-]
-
+// Динамические инсайты — генерируются в Dashboard через generateInsights()
+// (статический массив INSIGHTS удалён, используется useEffect ниже)
 const achIcons: Record<string, any> = { flame: Flame, wallet: Wallet, calendar: CalendarDays, activity: Activity, dumbbell: Dumbbell, book: BookOpen, crown: Crown, star: Star, droplets: Droplets, bed: BedDouble, footprints: Footprints, shield: Shield, utensils: Utensils, swords: Swords }
 
 type SleepEntry = { id: number; date: string; bed: number; woke: number }
@@ -2473,7 +2470,10 @@ function PlanBuilder({ onClose, onAddTasks }: { onClose: () => void, onAddTasks?
       setReal(true)
       setStep('result')
     } catch {
-      setPlanData(PLAN)
+      // Используем умный fallback вместо статичного PLAN
+      const fb = fallbackPlan(goal)
+      setPlanData(fb.weeks.slice(0, 6).map((w, i) => ({ week: w.week || 'Неделя ' + (i + 1), tasks: w.tasks.map(t => t.name).slice(0, 6) })))
+      setWhy(whyThisPlan(goal, fb))
       setReal(false)
       setStep('result')
     }
