@@ -141,7 +141,6 @@ export async function chatVision(
   } catch {
     throw new Error('Не удалось подключиться к серверу ИИ — проверь Base URL и интернет')
   }
-  })
 
   if (!res.ok) {
     let detail = ''
